@@ -3,162 +3,174 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Jun Wei Kinematic Lab</title>
+  <title>Jun Wei Biodynamic Lab</title>
   <style>
     body{font-family:system-ui,Segoe UI,Roboto,Arial;background:#0f172a;color:#e6eef8;margin:0}
-    .app{display:grid;grid-template-columns:380px 1fr;gap:12px;padding:12px}
+    .app{display:grid;grid-template-columns:340px 1fr;gap:12px;padding:12px}
     .panel{background:#0b1220;padding:12px;border-radius:10px;box-shadow:0 6px 24px rgba(2,6,23,.6)}
-    .controls button{width:100%;margin:6px 0;padding:10px;border-radius:8px;border:none;background:#2563eb;color:white;font-weight:600;cursor:pointer}
+    button{width:100%;margin:6px 0;padding:10px;border-radius:8px;border:none;background:#2563eb;color:white;font-weight:700;cursor:pointer}
+    button.secondary{background:#475569}
+    button.danger{background:#ef4444}
+    button.good{background:#22c55e}
     #videoWrap{position:relative}
     video, canvas{width:100%;height:auto;border-radius:10px}
-    table{width:100%;border-collapse:collapse;color:#cfe6ff}
-    th,td{padding:6px;border-bottom:1px solid rgba(255,255,255,0.04);text-align:left;font-size:13px}
     .small{font-size:12px;color:#9fb5d9}
+    label{display:flex;gap:8px;align-items:center;margin:6px 0;color:#cfe6ff;font-size:13px}
+    input[type=number]{background:#0b1220;border:1px solid #20314a;padding:8px;border-radius:6px;color:#e6eef8;width:100%}
     .row{display:flex;gap:8px}
-    .chartWrap{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
-    input[type=number], select{background:#0b1220;border:1px solid #20314a;padding:8px;border-radius:6px;color:#e6eef8;width:100%}
-    label{display:block;margin-top:8px}
-    .muted{color:#9fb5d9;font-size:12px}
-    tr.focused-row{background:rgba(37,99,235,0.15);}
+    .row > *{flex:1}
+    .status{padding:8px;border-radius:8px;background:rgba(148,163,184,0.12);border:1px solid rgba(148,163,184,0.25)}
+    table{width:100%;border-collapse:collapse;color:#cfe6ff;margin-top:10px}
+    th,td{padding:6px;border-bottom:1px solid rgba(255,255,255,0.06);text-align:left;font-size:12px}
+    tr.focused{background:rgba(37,99,235,0.18)}
+    .jointGrid{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px}
+    .interp{white-space:pre-line;margin:8px 0 0 0;color:#dbeafe;font-size:12px}
+    .hint{color:#9fb5d9;font-size:11px;margin-top:6px;line-height:1.35}
   </style>
 </head>
 <body>
   <div class="app">
     <div class="panel" style="height:calc(100vh - 32px);overflow:auto">
-      <h2>Jun Wei Kinematic Lab — Motion Capture UI</h2>
-
-      <div class="controls">
-        <label class="small">Camera</label>
-        <button id="startCam">Start camera (back camera preferred)</button>
-        <button id="stopCam">Stop camera</button>
-
-        <label class="small">Recording</label>
-        <button id="startRec">Start recording</button>
-        <button id="stopRec">Stop recording</button>
-        <button id="downloadCSV">Download joint CSV</button>
+      <h2 style="margin:0 0 8px 0;">Jun Wei Biodynamic Lab</h2>
+      <div class="status">
+        <div class="small"><b>Status:</b> <span id="statusText">Idle</span></div>
+        <div class="small"><b>FPS (loop):</b> <span id="fpsText">--</span></div>
+        <div class="small"><b>Recording samples:</b> <span id="sampleCount">0</span></div>
       </div>
 
-      <h3>Joint kinematics (live)</h3>
-      <p class="small">Tip: click a joint row to focus plots & free body diagram.</p>
-      <table id="kinTable">
-        <thead>
-          <tr>
-            <th>Joint</th><th>Angle (°)</th><th>Smoothed (°)</th><th>Velocity (°/s)</th><th>Torque (Nm)</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
+      <h3 style="margin:14px 0 6px 0;">Camera</h3>
+      <button id="startCam">Start camera (back preferred)</button>
+      <button id="stopCam" class="secondary">Stop camera</button>
+      <button id="exportPNG" class="secondary">Export PNG snapshot (video + overlay)</button>
 
-      <h3>Anthropometrics</h3>
-      <label class="small">Body mass (kg)</label>
+      <h3 style="margin:14px 0 6px 0;">Recording</h3>
+      <div class="row">
+        <button id="startRec" class="good">Start record</button>
+        <button id="stopRec" class="danger">Stop record</button>
+      </div>
+      <button id="downloadCSV" class="secondary">Download joint CSV</button>
+
+      <h3 style="margin:14px 0 6px 0;">Anthropometrics</h3>
+      <div class="small">Body mass (kg)</div>
       <input id="subjectMass" type="number" value="70" />
-      <label class="small">Body height (m)</label>
+      <div class="small" style="margin-top:8px;">Body height (m)</div>
       <input id="subjectHeight" type="number" step="0.01" value="1.75" />
       <div class="row">
-        <button id="applyAnthro">Apply anthropometrics</button>
-        <button id="resetAnthro">Reset defaults</button>
+        <button id="applyAnthro" class="secondary">Apply</button>
+        <button id="resetAnthro" class="secondary">Reset</button>
       </div>
 
-      <h3>Modes</h3>
-      <label class="small">
+      <h3 style="margin:14px 0 6px 0;">Joints to track</h3>
+      <div class="jointGrid" id="jointGrid"></div>
+
+      <label style="margin-top:10px;">
         <input type="checkbox" id="teachingMode" />
-        Teaching mode (show biomech notes)
-      </label>
-      <label class="small" style="margin-top:8px;">
-        Chain view:
-        <select id="chainView" style="width:100%;margin-top:4px;">
-          <option value="full">Full body</option>
-          <option value="upper">Upper limb chain</option>
-          <option value="lower">Lower limb chain</option>
-        </select>
+        Teaching mode (extra notes + force labels)
       </label>
 
-      <p class="muted">
-        Notes: BlazePose + simplified inverse dynamics. High-fps capable (up to ~150 fps depending on device / browser).
-        CSV contains torso, shoulders, elbows, wrists, hips, knees, ankles (both sides).
-      </p>
+      <div class="hint">
+        Tip: Click a row in the table to set the “focus joint” (FBD emphasis + interpretation).<br/>
+        If your camera doesn’t start: open this page via <b>https</b> or <b>localhost</b>.
+      </div>
     </div>
 
-    <div class="panel" id="videoPanel">
+    <div class="panel">
       <div id="videoWrap">
-        <video id="video" playsinline></video>
+        <video id="video" playsinline muted></video>
         <canvas id="overlay"></canvas>
       </div>
 
-      <div class="chartWrap">
-        <div class="panel" style="padding:8px;">
-          <h4 class="small">Angle (deg)</h4>
-          <canvas id="angleChart" height="200"></canvas>
-        </div>
-        <div class="panel" style="padding:8px;">
-          <h4 class="small">Torque (Nm)</h4>
-          <canvas id="torqueChart" height="200"></canvas>
-        </div>
-      </div>
+      <h3 style="margin:12px 0 6px 0;">Live joint table</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Joint</th><th>Angle (°)</th><th>Vel (°/s)</th><th>τ (Nm)</th>
+          </tr>
+        </thead>
+        <tbody id="kinBody"></tbody>
+      </table>
 
-      <div class="panel" style="margin-top:12px;">
-        <h4 class="small">Automatic Interpretation</h4>
-        <p id="interpText" class="small" style="white-space:pre-line;margin-top:6px;">
-          Waiting for pose...
-        </p>
-      </div>
+      <p class="interp" id="interpText">Waiting for pose...</p>
     </div>
   </div>
-
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
   <script type="module">
     import { FilesetResolver, PoseLandmarker } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0';
 
+    // ---------- UI refs ----------
     const video = document.getElementById('video');
     const overlay = document.getElementById('overlay');
     const ctx = overlay.getContext('2d');
-    const startCam = document.getElementById('startCam');
-    const stopCam = document.getElementById('stopCam');
-    const startRec = document.getElementById('startRec');
-    const stopRec = document.getElementById('stopRec');
-    const downloadCSVBtn = document.getElementById('downloadCSV');
-    const kinTable = document.querySelector('#kinTable tbody');
 
-    const subjectMassInput = document.getElementById('subjectMass');
+    const startCamBtn = document.getElementById('startCam');
+    const stopCamBtn  = document.getElementById('stopCam');
+    const exportPNGBtn = document.getElementById('exportPNG');
+
+    const startRecBtn = document.getElementById('startRec');
+    const stopRecBtn  = document.getElementById('stopRec');
+    const downloadBtn = document.getElementById('downloadCSV');
+
+    const statusText  = document.getElementById('statusText');
+    const fpsText     = document.getElementById('fpsText');
+    const sampleCount = document.getElementById('sampleCount');
+
+    const subjectMassInput   = document.getElementById('subjectMass');
     const subjectHeightInput = document.getElementById('subjectHeight');
-    const applyAnthro = document.getElementById('applyAnthro');
-    const resetAnthro = document.getElementById('resetAnthro');
+    const applyAnthroBtn = document.getElementById('applyAnthro');
+    const resetAnthroBtn = document.getElementById('resetAnthro');
 
-    const teachingModeCheckbox = document.getElementById('teachingMode');
-    const chainViewSelect = document.getElementById('chainView');
+    const teachingMode = document.getElementById('teachingMode');
+    const jointGrid = document.getElementById('jointGrid');
+
+    const kinBody = document.getElementById('kinBody');
     const interpText = document.getElementById('interpText');
 
+    // ---------- State ----------
     let poseLandmarker = null;
     let stream = null;
+    let loopRunning = false;
     let recording = false;
+
     let samples = [];
     let lastAngles = {};
     let lastTime = null;
-    let loopRunning = false;
 
-    const JOINTS_OF_INTEREST = [
-      'torso',
-      'leftShoulder','rightShoulder',
-      'leftElbow','rightElbow',
-      'leftWrist','rightWrist',
-      'leftHip','rightHip',
-      'leftKnee','rightKnee',
-      'leftAnkle','rightAnkle'
+    let focusJoint = 'Torso';
+    let frameCounter = 0;
+
+    // FPS display
+    let fpsLastT = performance.now();
+    let fpsFrames = 0;
+
+    // ---------- Joint naming / selection ----------
+    const JOINTS = [
+      'Torso',
+      'L_Shoulder','R_Shoulder',
+      'L_Elbow','R_Elbow',
+      'L_Wrist','R_Wrist',
+      'L_Hip','R_Hip',
+      'L_Knee','R_Knee',
+      'L_Ankle','R_Ankle'
     ];
+    const DEFAULT_SELECTED = new Set(JOINTS);
 
-    let focusJoint = 'torso';
-    let focusJointSetByUser = false;
-
-    function defaultJointForChain(chain){
-      switch(chain){
-        case 'upper': return 'rightWrist';
-        case 'lower': return 'rightAnkle';
-        default:      return 'torso';
+    function buildJointSelector(){
+      jointGrid.innerHTML = '';
+      for(const j of JOINTS){
+        const id = `j_${j}`;
+        const wrap = document.createElement('label');
+        wrap.style.margin = '0';
+        wrap.innerHTML = `<input type="checkbox" id="${id}" value="${j}" ${DEFAULT_SELECTED.has(j)?'checked':''} /> ${j}`;
+        jointGrid.appendChild(wrap);
       }
     }
+    buildJointSelector();
 
-    // anthropometrics (derived from mass & height)
+    function selectedJoints(){
+      return [...jointGrid.querySelectorAll('input[type=checkbox]:checked')].map(x=>x.value);
+    }
+
+    // ---------- Anthropometrics ----------
     let anthro = {
       subjectMass: 70,
       subjectHeight: 1.75,
@@ -168,7 +180,7 @@
       forearmM: 0.016 * 70
     };
 
-    function applyAnthroFromUI(){
+    function applyAnthro(){
       const mass = Number(subjectMassInput.value) || 70;
       const height = Number(subjectHeightInput.value) || 1.75;
 
@@ -182,82 +194,208 @@
 
       anthro.upperArmCOM = anthro.upperArmL * 0.436;
       anthro.forearmCOM = anthro.forearmL * 0.430;
-      anthro.upperArmI = (anthro.upperArmM * Math.pow(anthro.upperArmL,2)) * 0.05;
-      anthro.forearmI = (anthro.forearmM * Math.pow(anthro.forearmL,2)) * 0.04;
+      anthro.upperArmI = (anthro.upperArmM * (anthro.upperArmL**2)) * 0.05;
+      anthro.forearmI = (anthro.forearmM * (anthro.forearmL**2)) * 0.04;
 
-      console.log('Anthro applied', anthro);
+      setStatus('Anthro applied');
     }
 
-    function resetAnthroFn(){
-      anthro.subjectMass = 70;
-      anthro.subjectHeight = 1.75;
-      subjectMassInput.value = anthro.subjectMass;
-      subjectHeightInput.value = anthro.subjectHeight.toFixed(2);
-      applyAnthroFromUI();
+    function resetAnthro(){
+      subjectMassInput.value = 70;
+      subjectHeightInput.value = 1.75;
+      applyAnthro();
     }
 
-    applyAnthro.addEventListener('click', applyAnthroFromUI);
-    resetAnthro.addEventListener('click', resetAnthroFn);
-    resetAnthroFn();
+    applyAnthroBtn.addEventListener('click', applyAnthro);
+    resetAnthroBtn.addEventListener('click', resetAnthro);
+    resetAnthro();
 
-    chainViewSelect.addEventListener('change', ()=>{
-      if(!focusJointSetByUser){
-        focusJoint = defaultJointForChain(chainViewSelect.value);
-      }
-    });
-    focusJoint = defaultJointForChain(chainViewSelect.value);
-
-    // One Euro Filter (internal only)
+    // ---------- OneEuro filter (internal only) ----------
     class OneEuroFilter {
       constructor(freq=150, minCutoff=1.0, beta=0.007, dcutoff=1.0){
-        this.freq = freq; this.minCutoff = minCutoff; this.beta = beta; this.dcutoff = dcutoff;
-        this.xPrev = null; this.dxPrev = 0; this.lastTime = null;
+        this.freq=freq; this.minCutoff=minCutoff; this.beta=beta; this.dcutoff=dcutoff;
+        this.xPrev=null; this.dxPrev=0; this.lastTime=null;
       }
       alpha(cutoff){
         const tau = 1.0/(2*Math.PI*cutoff);
         const te = 1.0/this.freq;
         return 1.0/(1.0 + tau/te);
       }
-      filter(x, t=null){
+      filter(x, t){
         if(this.lastTime && t){
-          const dt = (t - this.lastTime) / 1000;
-          const safeDt = Math.max(1/300, Math.min(dt, 1/10)); // clamp 0.0033–0.1s
-          this.freq = 1.0 / safeDt;
+          const dt = (t-this.lastTime)/1000;
+          const safeDt = Math.max(1/300, Math.min(dt, 1/10));
+          this.freq = 1.0/safeDt;
         }
         this.lastTime = t || this.lastTime;
-        if(this.xPrev === null){ this.xPrev = x; return x; }
-        const dx = (x - this.xPrev) * this.freq;
-        const edalpha = this.alpha(this.dcutoff);
-        const dxHat = edalpha*dx + (1-edalpha)*this.dxPrev;
+        if(this.xPrev===null){ this.xPrev=x; return x; }
+        const dx = (x-this.xPrev)*this.freq;
+        const eda = this.alpha(this.dcutoff);
+        const dxHat = eda*dx + (1-eda)*this.dxPrev;
         const cutoff = this.minCutoff + this.beta*Math.abs(dxHat);
         const ea = this.alpha(cutoff);
         const xHat = ea*x + (1-ea)*this.xPrev;
-        this.xPrev = xHat; this.dxPrev = dxHat;
+        this.xPrev=xHat; this.dxPrev=dxHat;
         return xHat;
       }
     }
-
-    const angleCtx = document.getElementById('angleChart').getContext('2d');
-    const torqueCtx = document.getElementById('torqueChart').getContext('2d');
-    const angleChart = new Chart(angleCtx, {
-      type:'line',
-      data:{labels:[], datasets:[{label:'Angle (deg)', data:[], tension:0.2, fill:true}]},
-      options:{animation:false, maintainAspectRatio:false, scales:{x:{display:false}}}
-    });
-    const torqueChart = new Chart(torqueCtx, {
-      type:'line',
-      data:{labels:[], datasets:[{label:'Torque (Nm)', data:[], tension:0.2, fill:true}]},
-      options:{animation:false, maintainAspectRatio:false, scales:{x:{display:false}}}
-    });
-
-    const angleBuffer = [], torqueBuffer = [], timeBuffer = [];
-    const PLOT_BUFFER_LEN = 200;
-    function pushToBuffer(buf,val){ buf.push(Number.isFinite(val)?Number(val.toFixed(4)):NaN); }
-    function trimBuffers(len){
-      while(angleBuffer.length>len) angleBuffer.shift();
-      while(torqueBuffer.length>len) torqueBuffer.shift();
-      while(timeBuffer.length>len) timeBuffer.shift();
+    const filters = {};
+    function getFilter(key){
+      if(!filters[key]) filters[key] = new OneEuroFilter(150, 1.0, 0.007, 1.0);
+      return filters[key];
     }
+
+    // ---------- Mediapipe setup ----------
+    async function initPose(){
+      const vision = await FilesetResolver.forVisionTasks(
+        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm'
+      );
+      poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task'
+        },
+        runningMode: 'VIDEO',
+        numPoses: 1
+      });
+      setStatus('Pose model ready');
+    }
+    await initPose();
+
+    // ---------- Camera ----------
+    async function getBackCameraStream(){
+      const preferred = {
+        video: {
+          facingMode: { exact: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 150, max: 150 }
+        },
+        audio: false
+      };
+      try{
+        return await navigator.mediaDevices.getUserMedia(preferred);
+      }catch(e){
+        return await navigator.mediaDevices.getUserMedia({
+          video: { width:{ideal:1280}, height:{ideal:720}, frameRate:{ideal:60, max:120} },
+          audio:false
+        });
+      }
+    }
+
+    function resizeCanvasToVideo(){
+      const w = video.videoWidth || overlay.clientWidth;
+      const h = video.videoHeight || overlay.clientHeight;
+      overlay.width = w;
+      overlay.height = h;
+    }
+
+    startCamBtn.addEventListener('click', async ()=>{
+      try{
+        setStatus('Starting camera...');
+        stream = await getBackCameraStream();
+        video.srcObject = stream;
+
+        await video.play();
+
+        if(video.readyState >= 1) resizeCanvasToVideo();
+        video.onloadedmetadata = () => resizeCanvasToVideo();
+
+        if(!loopRunning){
+          loopRunning = true;
+          lastTime = performance.now();
+          runLoop();
+        }
+
+        setStatus('Camera running');
+      }catch(err){
+        console.error(err);
+        setStatus('Camera error: ' + err.message);
+      }
+    });
+
+    stopCamBtn.addEventListener('click', ()=>{
+      if(stream){
+        stream.getTracks().forEach(t=>t.stop());
+        stream = null;
+      }
+      setStatus('Camera stopped');
+      loopRunning = false;
+    });
+
+    // ---------- Recording (camera continues) ----------
+    startRecBtn.addEventListener('click', ()=>{
+      if(!stream){
+        setStatus('Start camera first');
+        return;
+      }
+      recording = true;
+      samples = [];
+      sampleCount.textContent = '0';
+      setStatus('Recording... (camera continues)');
+    });
+
+    stopRecBtn.addEventListener('click', ()=>{
+      recording = false;
+      setStatus(`Recording stopped (${samples.length} samples)`);
+    });
+
+    downloadBtn.addEventListener('click', ()=>{
+      downloadCSV();
+    });
+
+    // ---------- PNG snapshot export (video + overlay) ----------
+    exportPNGBtn.addEventListener('click', ()=>{
+      exportPNGSnapshot();
+    });
+
+    function exportPNGSnapshot(){
+      if(!video || video.readyState < 2){
+        setStatus('PNG export: video not ready');
+        return;
+      }
+      const w = video.videoWidth || overlay.width;
+      const h = video.videoHeight || overlay.height;
+      if(!w || !h){
+        setStatus('PNG export: invalid dimensions');
+        return;
+      }
+
+      const out = document.createElement('canvas');
+      out.width = w;
+      out.height = h;
+      const octx = out.getContext('2d');
+
+      // draw camera frame
+      octx.drawImage(video, 0, 0, w, h);
+      // draw overlay (skeleton + FBD + highlights)
+      octx.drawImage(overlay, 0, 0, w, h);
+
+      const ts = new Date();
+      const stamp = ts.toISOString().replace(/[:.]/g,'-');
+      const filename = `JunWeiBiodynamicLab_snapshot_${stamp}.png`;
+
+      out.toBlob((blob)=>{
+        if(!blob){
+          setStatus('PNG export failed');
+          return;
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        setStatus('PNG snapshot exported');
+      }, 'image/png');
+    }
+
+    // ---------- Kinematics helpers ----------
+    const kpNames = [
+      'nose','leftEyeInner','leftEye','leftEyeOuter','rightEyeInner','rightEye','rightEyeOuter','leftEar','rightEar','mouthLeft','mouthRight',
+      'leftShoulder','rightShoulder','leftElbow','rightElbow','leftWrist','rightWrist','leftPinky','rightPinky','leftIndex','rightIndex','leftThumb','rightThumb',
+      'leftHip','rightHip','leftKnee','rightKnee','leftAnkle','rightAnkle','leftHeel','rightHeel','leftFootIndex','rightFootIndex'
+    ];
+    const idx = n => kpNames.indexOf(n);
 
     function angleBetween3D(a,b,c){
       const v1 = {x:a.x-b.x, y:a.y-b.y, z:(a.z||0)-(b.z||0)};
@@ -270,197 +408,306 @@
       return Math.acos(cos)*180/Math.PI;
     }
 
-    function torsoAngleDeg(lm, idx){
-      const lSh = lm[idx('leftShoulder')];
-      const rSh = lm[idx('rightShoulder')];
-      const lHip = lm[idx('leftHip')];
-      const rHip = lm[idx('rightHip')];
-      if(!lSh || !rSh || !lHip || !rHip) return NaN;
+    function torsoAngleDeg(lm){
+      const lSh = lm[idx('leftShoulder')], rSh = lm[idx('rightShoulder')];
+      const lHip = lm[idx('leftHip')], rHip = lm[idx('rightHip')];
+      if(!lSh||!rSh||!lHip||!rHip) return NaN;
       const midSh = {x:(lSh.x+rSh.x)/2, y:(lSh.y+rSh.y)/2};
       const midHip = {x:(lHip.x+rHip.x)/2, y:(lHip.y+rHip.y)/2};
-      const vx = midSh.x - midHip.x;
-      const vy = midSh.y - midHip.y;
-      const dot = vx*0 + vy*(-1); // vertical up
+      const vx = midSh.x-midHip.x, vy = midSh.y-midHip.y;
       const mag = Math.hypot(vx,vy);
       if(mag===0) return NaN;
-      let cos = dot/mag; cos = Math.max(-1, Math.min(1, cos));
+      let cos = (vy*(-1))/mag; cos = Math.max(-1, Math.min(1, cos));
       return Math.acos(cos)*180/Math.PI;
     }
 
-    function inverseDynamicsArm(theta_shoulder_deg, theta_elbow_deg, theta_shoulder_vel, theta_elbow_vel, theta_shoulder_acc, theta_elbow_acc){
-      const g = 9.80665;
-      const ua = anthro.upperArmM; const fa = anthro.forearmM;
-      const la = anthro.upperArmL; const lf = anthro.forearmL;
-      const ra = anthro.upperArmCOM; const rf = anthro.forearmCOM;
-      const Ia = anthro.upperArmI; const If = anthro.forearmI;
+    function updateJoint(key, rawAngle, nowMs, dt){
+      const f = getFilter(key);
+      const angleSm = f.filter(rawAngle, nowMs);
+      const prev = lastAngles[key] || {angle:angleSm, vel:0};
+      const vel = (isFinite(angleSm) && isFinite(prev.angle)) ? (angleSm - prev.angle)/dt : 0;
+      const accel = (isFinite(vel) && isFinite(prev.vel)) ? (vel - prev.vel)/dt : 0;
+      lastAngles[key] = {angle:angleSm, vel};
+      return {angle:rawAngle, angleSm, vel, accel, tau:NaN};
+    }
 
-      const th1 = theta_shoulder_deg*Math.PI/180; const th2 = theta_elbow_deg*Math.PI/180;
-      const dth1 = theta_shoulder_vel*Math.PI/180; const dth2 = theta_elbow_vel*Math.PI/180;
-      const ddth1 = theta_shoulder_acc*Math.PI/180; const ddth2 = theta_elbow_acc*Math.PI/180;
+    function inverseDynamicsArm(theta_sh_deg, theta_el_deg, dth_sh, dth_el, ddth_sh, ddth_el){
+      const g = 9.80665;
+      const ua = anthro.upperArmM, fa = anthro.forearmM;
+      const la = anthro.upperArmL;
+      const ra = anthro.upperArmCOM, rf = anthro.forearmCOM;
+      const Ia = anthro.upperArmI, If = anthro.forearmI;
+
+      const th1 = theta_sh_deg*Math.PI/180, th2 = theta_el_deg*Math.PI/180;
+      const d1 = dth_sh*Math.PI/180, d2 = dth_el*Math.PI/180;
+      const dd1 = ddth_sh*Math.PI/180, dd2 = ddth_el*Math.PI/180;
 
       const m11 = Ia + If + ua*ra*ra + fa*(la*la + rf*rf + 2*la*rf*Math.cos(th2));
       const m12 = If + fa*(rf*rf + la*rf*Math.cos(th2));
       const m21 = m12;
       const m22 = If + fa*rf*rf;
+
       const h = -fa*la*rf*Math.sin(th2);
-      const c1 = h*(2*dth1*dth2 + dth2*dth2);
-      const c2 = h*dth1*dth1;
+      const c1 = h*(2*d1*d2 + d2*d2);
+      const c2 = h*d1*d1;
+
       const g1 = ua*g*ra*Math.cos(th1) + fa*g*(la*Math.cos(th1) + rf*Math.cos(th1+th2));
       const g2 = fa*g*rf*Math.cos(th1+th2);
-      const tau1 = m11*ddth1 + m12*ddth2 + c1 + g1;
-      const tau2 = m21*ddth1 + m22*ddth2 + c2 + g2;
+
+      const tau1 = m11*dd1 + m12*dd2 + c1 + g1;
+      const tau2 = m21*dd1 + m22*dd2 + c2 + g2;
       return {tau_shoulder:tau1, tau_elbow:tau2};
     }
 
-    async function getBackCameraStream(){
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-        throw new Error('Camera API not supported in this browser.');
+    // ---------- Drawing: skeleton + FBD on camera ----------
+    const SEG = {
+      torso: 'rgba(248,250,252,0.95)',
+      L_arm: 'rgba(59,130,246,0.95)',
+      R_arm: 'rgba(6,182,212,0.95)',
+      L_leg: 'rgba(34,197,94,0.95)',
+      R_leg: 'rgba(132,204,22,0.95)'
+    };
+
+    function drawLine(a,b,color,width=5){
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.moveTo(a.x,a.y);
+      ctx.lineTo(b.x,b.y);
+      ctx.stroke();
+    }
+
+    function drawPoint(p,color='rgba(147,197,253,0.9)',r=3){
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(p.x,p.y,r,0,Math.PI*2);
+      ctx.fill();
+    }
+
+    function drawArrow(x1,y1,x2,y2,label,color){
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(x1,y1);
+      ctx.lineTo(x2,y2);
+      ctx.stroke();
+      const ang = Math.atan2(y2-y1, x2-x1);
+      const head = 7;
+      ctx.beginPath();
+      ctx.moveTo(x2,y2);
+      ctx.lineTo(x2 - head*Math.cos(ang-0.45), y2 - head*Math.sin(ang-0.45));
+      ctx.lineTo(x2 - head*Math.cos(ang+0.45), y2 - head*Math.sin(ang+0.45));
+      ctx.closePath();
+      ctx.fill();
+      if(label){
+        ctx.font = '12px system-ui';
+        ctx.fillText(label, x2+4, y2-4);
       }
-      const constraintsPreferred = {
-        video: {
-          facingMode: { exact: 'environment' },
-          width: {ideal:1280},
-          height: {ideal:720},
-          frameRate: { ideal: 150, max: 150 }
-        },
-        audio:false
-      };
-      try{
-        return await navigator.mediaDevices.getUserMedia(constraintsPreferred);
-      }catch(e){
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const cams = devices.filter(d=>d.kind==='videoinput');
-        const preferred = cams.find(c=>/back|rear|environment|facing back/i.test(c.label));
-        if(preferred){
-          return await navigator.mediaDevices.getUserMedia({
-            video:{
-              deviceId:{exact:preferred.deviceId},
-              width:{ideal:1280},
-              height:{ideal:720},
-              frameRate:{ideal:150, max:150}
-            },
-            audio:false
-          });
+    }
+
+    function drawTorqueArc(cx,cy,tau,color){
+      if(!isFinite(tau)) return;
+      const sign = tau >= 0 ? 1 : -1;
+      const r = 18;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      const a0 = sign>0 ? -0.2 : Math.PI+0.2;
+      const a1 = sign>0 ? Math.PI-0.2 : 2*Math.PI-0.2;
+      ctx.arc(cx,cy,r,a0,a1, sign<0);
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.font = '12px system-ui';
+      ctx.fillText('τ', cx + r + 4, cy - 4);
+    }
+
+    function jointPointForKey(key, lm){
+      switch(key){
+        case 'Torso': {
+          const LS = lm[idx('leftShoulder')], RS = lm[idx('rightShoulder')];
+          const LH = lm[idx('leftHip')], RH = lm[idx('rightHip')];
+          if(!LS||!RS||!LH||!RH) return null;
+          const midSh = {x:(LS.x+RS.x)/2, y:(LS.y+RS.y)/2};
+          const midHip= {x:(LH.x+RH.x)/2, y:(LH.y+RH.y)/2};
+          return {x:(midSh.x+midHip.x)/2, y:(midSh.y+midHip.y)/2};
         }
-        return await navigator.mediaDevices.getUserMedia({
-          video:{width:640,height:480, frameRate:{ideal:60}},
-          audio:false
-        });
+        case 'L_Shoulder': return lm[idx('leftShoulder')];
+        case 'R_Shoulder': return lm[idx('rightShoulder')];
+        case 'L_Elbow': return lm[idx('leftElbow')];
+        case 'R_Elbow': return lm[idx('rightElbow')];
+        case 'L_Wrist': return lm[idx('leftWrist')];
+        case 'R_Wrist': return lm[idx('rightWrist')];
+        case 'L_Hip': return lm[idx('leftHip')];
+        case 'R_Hip': return lm[idx('rightHip')];
+        case 'L_Knee': return lm[idx('leftKnee')];
+        case 'R_Knee': return lm[idx('rightKnee')];
+        case 'L_Ankle': return lm[idx('leftAnkle')];
+        case 'R_Ankle': return lm[idx('rightAnkle')];
+        default: return null;
       }
     }
 
-    async function initPoseLandmarker(){
-      const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm');
-      poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
-        baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task' },
-        runningMode: 'VIDEO',
-        numPoses: 1
-      });
-      console.log('PoseLandmarker initialized');
+    function drawSkeletonAndFBD(lm, results){
+      ctx.clearRect(0,0,overlay.width,overlay.height);
+
+      const LS = lm[idx('leftShoulder')], RS = lm[idx('rightShoulder')];
+      const LE = lm[idx('leftElbow')],    RE = lm[idx('rightElbow')];
+      const LW = lm[idx('leftWrist')],    RW = lm[idx('rightWrist')];
+
+      const LH = lm[idx('leftHip')],      RH = lm[idx('rightHip')];
+      const LK = lm[idx('leftKnee')],     RK = lm[idx('rightKnee')];
+      const LA = lm[idx('leftAnkle')],    RA = lm[idx('rightAnkle')];
+
+      // Skeleton lines
+      if(LS && RS) drawLine(LS, RS, SEG.torso, 5);
+      if(LS && LH) drawLine(LS, LH, SEG.torso, 5);
+      if(RS && RH) drawLine(RS, RH, SEG.torso, 5);
+      if(LH && RH) drawLine(LH, RH, SEG.torso, 5);
+
+      if(LS && LE) drawLine(LS, LE, SEG.L_arm, 5);
+      if(LE && LW) drawLine(LE, LW, SEG.L_arm, 5);
+      if(RS && RE) drawLine(RS, RE, SEG.R_arm, 5);
+      if(RE && RW) drawLine(RE, RW, SEG.R_arm, 5);
+
+      if(LH && LK) drawLine(LH, LK, SEG.L_leg, 5);
+      if(LK && LA) drawLine(LK, LA, SEG.L_leg, 5);
+      if(RH && RK) drawLine(RH, RK, SEG.R_leg, 5);
+      if(RK && RA) drawLine(RK, RA, SEG.R_leg, 5);
+
+      // points
+      for(const p of [LS,RS,LE,RE,LW,RW,LH,RH,LK,RK,LA,RA]){
+        if(p) drawPoint(p);
+      }
+
+      // FBD on stickman
+      const selected = new Set(selectedJoints());
+      const showLabels = teachingMode.checked;
+
+      function fbdAtJoint(jointKey, jointPoint, distalPoint, tauVal){
+        if(!selected.has(jointKey) || !jointPoint || !distalPoint) return;
+
+        const mgColor = 'rgba(248,250,252,0.95)';
+        const rColor  = 'rgba(251,191,36,0.95)';
+        const tauColor= 'rgba(244,63,94,0.95)';
+
+        const comX = (jointPoint.x + distalPoint.x)/2;
+        const comY = (jointPoint.y + distalPoint.y)/2;
+
+        drawArrow(comX, comY, comX, comY+32, showLabels ? 'mg' : '', mgColor);
+        drawArrow(jointPoint.x, jointPoint.y, jointPoint.x, jointPoint.y-28, showLabels ? 'R' : '', rColor);
+        drawTorqueArc(jointPoint.x, jointPoint.y, tauVal, tauColor);
+      }
+
+      fbdAtJoint('L_Shoulder', LS, LE, results['L_Shoulder']?.tau);
+      fbdAtJoint('R_Shoulder', RS, RE, results['R_Shoulder']?.tau);
+      fbdAtJoint('L_Elbow', LE, LW, results['L_Elbow']?.tau);
+      fbdAtJoint('R_Elbow', RE, RW, results['R_Elbow']?.tau);
+      fbdAtJoint('L_Knee', LK, LA, results['L_Knee']?.tau);
+      fbdAtJoint('R_Knee', RK, RA, results['R_Knee']?.tau);
+
+      // Focus ring
+      const fp = jointPointForKey(focusJoint, lm);
+      if(fp){
+        ctx.strokeStyle = 'rgba(37,99,235,0.95)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(fp.x, fp.y, 10, 0, Math.PI*2);
+        ctx.stroke();
+      }
     }
-    await initPoseLandmarker();
 
-    const filters = {};
-    function getFilter(key){
-      const minCutoff = 1.0;
-      const beta = 0.007;
-      if(!filters[key]) filters[key] = new OneEuroFilter(150, minCutoff, beta);
-      return filters[key];
+    // ---------- Interpretation ----------
+    function flexionDescriptor(a){
+      if(!isFinite(a)) return 'angle not available';
+      if(a >= 165) return 'near full extension';
+      if(a >= 135) return 'slight flexion';
+      if(a >= 95)  return 'moderate flexion';
+      if(a >= 60)  return 'deep flexion';
+      return 'very deep flexion';
     }
+    function speedDescriptor(v){
+      if(!isFinite(v)) return 'motion speed unknown';
+      const a = Math.abs(v);
+      if(a < 5) return 'almost static';
+      if(a < 30) return 'slow / controlled';
+      if(a < 90) return 'moderate speed';
+      return 'fast / ballistic';
+    }
+    function torqueDescriptor(t){
+      if(!isFinite(t)) return 'τ not estimated';
+      const m = Math.abs(t);
+      if(m < 5) return 'low torque demand';
+      if(m < 30) return 'moderate torque demand';
+      return 'high torque demand';
+    }
+    function updateInterpretation(key, r){
+      if(!r){
+        interpText.textContent = 'Waiting for pose...';
+        return;
+      }
+      const a = isFinite(r.angleSm) ? r.angleSm : r.angle;
+      const v = r.vel;
+      const t = r.tau;
 
-    const kpNames = [
-      'nose','leftEyeInner','leftEye','leftEyeOuter','rightEyeInner','rightEye','rightEyeOuter','leftEar','rightEar','mouthLeft','mouthRight',
-      'leftShoulder','rightShoulder','leftElbow','rightElbow','leftWrist','rightWrist','leftPinky','rightPinky','leftIndex','rightIndex','leftThumb','rightThumb',
-      'leftHip','rightHip','leftKnee','rightKnee','leftAnkle','rightAnkle','leftHeel','rightHeel','leftFootIndex','rightFootIndex'
-    ];
-    const idx = name => kpNames.indexOf(name);
-
-    startCam.addEventListener('click', async ()=>{
-      try{
-        stream = await getBackCameraStream();
-        video.srcObject = stream;
-        video.onloadedmetadata = () => {
-          overlay.width = video.videoWidth || overlay.clientWidth;
-          overlay.height = video.videoHeight || overlay.clientHeight;
-        };
-        await video.play();
-        lastTime = performance.now();
-        if(!loopRunning){
-          loopRunning = true;
-          runLoop();
+      let txt =
+`${key}
+Angle ≈ ${isFinite(a)?a.toFixed(1):'--'}° → ${flexionDescriptor(a)}
+Vel   ≈ ${isFinite(v)?v.toFixed(1):'--'} °/s → ${speedDescriptor(v)}
+τ     ≈ ${isFinite(t)?t.toFixed(2):'--'} Nm → ${torqueDescriptor(t)}
+`;
+      if(teachingMode.checked){
+        if(/Knee|Hip|Ankle/.test(key)){
+          txt += `\nTeaching note: Lower-limb force arrows are illustrative unless you add GRF + full inverse dynamics.`;
+        } else if(/Shoulder|Elbow|Wrist/.test(key)){
+          txt += `\nTeaching note: τ shown for shoulder/elbow uses a simplified 2-link arm model.`;
+        } else if(key === 'Torso'){
+          txt += `\nTeaching note: Torso angle is a proxy for trunk lean vs vertical.`;
         }
-      }catch(err){
-        alert('Camera error: '+err.message);
-        console.error(err);
       }
-    });
+      interpText.textContent = txt;
+    }
 
-    stopCam.addEventListener('click', ()=>{
-      if(stream){
-        stream.getTracks().forEach(t=>t.stop());
-        stream = null;
-      }
-      loopRunning = false;
-    });
-
-    startRec.addEventListener('click', ()=>{
-      recording=true; samples=[]; lastAngles={};
-      alert('Recording started');
-    });
-    stopRec.addEventListener('click', ()=>{
-      recording=false;
-      alert('Recording stopped: '+samples.length+' samples');
-    });
-    downloadCSVBtn.addEventListener('click', handleDownloadCSV);
-
-    // Table row click: set focus joint
-    kinTable.addEventListener('click', (e)=>{
-      const tr = e.target.closest('tr');
-      if(!tr) return;
-      const j = tr.dataset.joint;
-      if(!j) return;
-      focusJoint = j;
-      focusJointSetByUser = true;
-      [...kinTable.querySelectorAll('tr')].forEach(r=>r.classList.remove('focused-row'));
-      tr.classList.add('focused-row');
-    });
-
+    // ---------- Main loop ----------
     async function runLoop(){
-      async function step(){
+      const step = async ()=>{
         if(!loopRunning) return;
-        if(!poseLandmarker || !video || video.readyState < 2){
+        if(!poseLandmarker || video.readyState < 2){
           requestAnimationFrame(step);
           return;
         }
+
         const now = performance.now();
-        const detection = await poseLandmarker.detectForVideo(video, now);
-        const pose = (detection && detection.landmarks && detection.landmarks.length>0) ? detection.landmarks[0] : null;
-        if(pose) processPose(pose, now);
+        const det = await poseLandmarker.detectForVideo(video, now);
+        const pose = (det?.landmarks?.length) ? det.landmarks[0] : null;
+
+        fpsFrames++;
+        const tNow = performance.now();
+        if(tNow - fpsLastT >= 500){
+          const fps = (fpsFrames * 1000) / (tNow - fpsLastT);
+          fpsText.textContent = fps.toFixed(1);
+          fpsFrames = 0;
+          fpsLastT = tNow;
+        }
+
+        if(pose){
+          frameCounter++;
+          processPose(pose, now);
+        }else{
+          ctx.clearRect(0,0,overlay.width,overlay.height);
+          interpText.textContent = 'Pose not detected (step back / improve lighting).';
+        }
+
         requestAnimationFrame(step);
-      }
+      };
       requestAnimationFrame(step);
     }
 
-    function updateJoint(name, rawAngle, dt){
-      const f = getFilter(name);
-      const angleSm = f.filter(rawAngle, performance.now());
-      const prev = lastAngles[name] || {angle:angleSm, vel:0};
-      const vel = isFinite(angleSm) && isFinite(prev.angle) ? (angleSm - prev.angle)/dt : 0;
-      const accel = isFinite(vel) && isFinite(prev.vel) ? (vel - prev.vel)/dt : 0;
-      lastAngles[name] = {angle:angleSm, vel};
-      return {angle:rawAngle, angleSm, vel, accel, tau:NaN};
-    }
-
     function processPose(landmarks, now){
-      const vidW = video.videoWidth || overlay.width;
-      const vidH = video.videoHeight || overlay.height;
+      const w = video.videoWidth || overlay.width;
+      const h = video.videoHeight || overlay.height;
 
-      const lm = landmarks.map(p=>({
-        x:p.x*vidW,
-        y:p.y*vidH,
-        z:p.z,
-        score:(p.hasOwnProperty('presence')?p.presence:1)
-      }));
+      const lm = landmarks.map(p=>({x:p.x*w, y:p.y*h, z:p.z}));
 
       const dtRaw = (now - (lastTime||now))/1000;
       const dt = Math.max(1/300, Math.min(dtRaw, 1/10));
@@ -468,409 +715,145 @@
 
       const results = {};
 
-      // Torso
-      const torsoAng = torsoAngleDeg(lm, idx);
-      results['torso'] = updateJoint('torso', torsoAng, dt);
+      results['Torso'] = updateJoint('Torso', torsoAngleDeg(lm), now, dt);
 
-      const ls = lm[idx('leftShoulder')], rs = lm[idx('rightShoulder')];
-      const le = lm[idx('leftElbow')], re = lm[idx('rightElbow')];
-      const lw = lm[idx('leftWrist')], rw = lm[idx('rightWrist')];
-      const li = lm[idx('leftIndex')], ri = lm[idx('rightIndex')];
+      const LS = lm[idx('leftShoulder')], RS = lm[idx('rightShoulder')];
+      const LE = lm[idx('leftElbow')],    RE = lm[idx('rightElbow')];
+      const LW = lm[idx('leftWrist')],    RW = lm[idx('rightWrist')];
+      const LI = lm[idx('leftIndex')],    RI = lm[idx('rightIndex')];
 
-      const lh = lm[idx('leftHip')], rh = lm[idx('rightHip')];
-      const lk = lm[idx('leftKnee')], rk = lm[idx('rightKnee')];
-      const la = lm[idx('leftAnkle')], ra = lm[idx('rightAnkle')];
-      const lfi = lm[idx('leftFootIndex')], rfi = lm[idx('rightFootIndex')];
+      const LH = lm[idx('leftHip')],      RH = lm[idx('rightHip')];
+      const LK = lm[idx('leftKnee')],     RK = lm[idx('rightKnee')];
+      const LA = lm[idx('leftAnkle')],    RA = lm[idx('rightAnkle')];
+      const LFI = lm[idx('leftFootIndex')], RFI = lm[idx('rightFootIndex')];
 
-      // Shoulders: hip-shoulder-elbow
-      if(lh && ls && le) results['leftShoulder']  = updateJoint('leftShoulder',  angleBetween3D(lh, ls, le), dt);
-      if(rh && rs && re) results['rightShoulder'] = updateJoint('rightShoulder', angleBetween3D(rh, rs, re), dt);
+      if(LH && LS && LE) results['L_Shoulder'] = updateJoint('L_Shoulder', angleBetween3D(LH, LS, LE), now, dt);
+      if(RH && RS && RE) results['R_Shoulder'] = updateJoint('R_Shoulder', angleBetween3D(RH, RS, RE), now, dt);
 
-      // Elbows: shoulder-elbow-wrist
-      if(ls && le && lw) results['leftElbow']  = updateJoint('leftElbow',  angleBetween3D(ls, le, lw), dt);
-      if(rs && re && rw) results['rightElbow'] = updateJoint('rightElbow', angleBetween3D(rs, re, rw), dt);
+      if(LS && LE && LW) results['L_Elbow'] = updateJoint('L_Elbow', angleBetween3D(LS, LE, LW), now, dt);
+      if(RS && RE && RW) results['R_Elbow'] = updateJoint('R_Elbow', angleBetween3D(RS, RE, RW), now, dt);
 
-      // Wrists: elbow-wrist-index
-      if(le && lw && li) results['leftWrist']  = updateJoint('leftWrist',  angleBetween3D(le, lw, li), dt);
-      if(re && rw && ri) results['rightWrist'] = updateJoint('rightWrist', angleBetween3D(re, rw, ri), dt);
+      if(LE && LW && LI) results['L_Wrist'] = updateJoint('L_Wrist', angleBetween3D(LE, LW, LI), now, dt);
+      if(RE && RW && RI) results['R_Wrist'] = updateJoint('R_Wrist', angleBetween3D(RE, RW, RI), now, dt);
 
-      // Hips: shoulder-hip-knee (same-side shoulder)
-      if(ls && lh && lk) results['leftHip']  = updateJoint('leftHip',  angleBetween3D(ls, lh, lk), dt);
-      if(rs && rh && rk) results['rightHip'] = updateJoint('rightHip', angleBetween3D(rs, rh, rk), dt);
+      if(LS && LH && LK) results['L_Hip'] = updateJoint('L_Hip', angleBetween3D(LS, LH, LK), now, dt);
+      if(RS && RH && RK) results['R_Hip'] = updateJoint('R_Hip', angleBetween3D(RS, RH, RK), now, dt);
 
-      // Knees: hip-knee-ankle
-      if(lh && lk && la) results['leftKnee']  = updateJoint('leftKnee',  angleBetween3D(lh, lk, la), dt);
-      if(rh && rk && ra) results['rightKnee'] = updateJoint('rightKnee', angleBetween3D(rh, rk, ra), dt);
+      if(LH && LK && LA) results['L_Knee'] = updateJoint('L_Knee', angleBetween3D(LH, LK, LA), now, dt);
+      if(RH && RK && RA) results['R_Knee'] = updateJoint('R_Knee', angleBetween3D(RH, RK, RA), now, dt);
 
-      // Ankles: knee-ankle-footIndex
-      if(lk && la && lfi) results['leftAnkle']  = updateJoint('leftAnkle',  angleBetween3D(lk, la, lfi), dt);
-      if(rk && ra && rfi) results['rightAnkle'] = updateJoint('rightAnkle', angleBetween3D(rk, ra, rfi), dt);
+      if(LK && LA && LFI) results['L_Ankle'] = updateJoint('L_Ankle', angleBetween3D(LK, LA, LFI), now, dt);
+      if(RK && RA && RFI) results['R_Ankle'] = updateJoint('R_Ankle', angleBetween3D(RK, RA, RFI), now, dt);
 
-      // Inverse dynamics for arms: shoulder & elbow tau
-      const lSh = results['leftShoulder'],  lEl = results['leftElbow'];
-      const rSh = results['rightShoulder'], rEl = results['rightElbow'];
-      if(lSh && lEl){
-        const inv = inverseDynamicsArm(lSh.angleSm, lEl.angleSm, lSh.vel, lEl.vel, lSh.accel, lEl.accel);
-        lSh.tau = inv.tau_shoulder;
-        lEl.tau = inv.tau_elbow;
+      if(results['L_Shoulder'] && results['L_Elbow']){
+        const sh = results['L_Shoulder'], el = results['L_Elbow'];
+        const inv = inverseDynamicsArm(sh.angleSm, el.angleSm, sh.vel, el.vel, sh.accel, el.accel);
+        sh.tau = inv.tau_shoulder;
+        el.tau = inv.tau_elbow;
       }
-      if(rSh && rEl){
-        const inv = inverseDynamicsArm(rSh.angleSm, rEl.angleSm, rSh.vel, rEl.vel, rSh.accel, rEl.accel);
-        rSh.tau = inv.tau_shoulder;
-        rEl.tau = inv.tau_elbow;
+      if(results['R_Shoulder'] && results['R_Elbow']){
+        const sh = results['R_Shoulder'], el = results['R_Elbow'];
+        const inv = inverseDynamicsArm(sh.angleSm, el.angleSm, sh.vel, el.vel, sh.accel, el.accel);
+        sh.tau = inv.tau_shoulder;
+        el.tau = inv.tau_elbow;
       }
-      // others remain tau = NaN
 
-      drawOverlay(lm, results);
+      drawSkeletonAndFBD(lm, results);
 
-      // UI table
-      kinTable.innerHTML = '';
-      for(const key of JOINTS_OF_INTEREST){
-        const r = results[key];
+      const selected = selectedJoints();
+      kinBody.innerHTML = '';
+      for(const j of selected){
+        const r = results[j];
         if(!r) continue;
         const tr = document.createElement('tr');
-        tr.dataset.joint = key;
-        if(key === focusJoint) tr.classList.add('focused-row');
+        if(j === focusJoint) tr.classList.add('focused');
+        tr.dataset.joint = j;
         tr.innerHTML = `
-          <td>${key}</td>
-          <td>${isFinite(r.angle)?r.angle.toFixed(1):'--'}</td>
+          <td>${j}</td>
           <td>${isFinite(r.angleSm)?r.angleSm.toFixed(1):'--'}</td>
           <td>${isFinite(r.vel)?r.vel.toFixed(1):'--'}</td>
           <td>${isFinite(r.tau)?r.tau.toFixed(2):'--'}</td>
         `;
-        kinTable.appendChild(tr);
+        kinBody.appendChild(tr);
       }
 
-      // Charts for focusJoint
-      const resPlot = results[focusJoint] || results['torso'] || Object.values(results)[0];
-      const timeLabel = new Date().toLocaleTimeString();
+      const selectedSet = new Set(selected);
+      if(!selectedSet.has(focusJoint)){
+        focusJoint = selected[0] || 'Torso';
+      }
 
-      pushToBuffer(angleBuffer, resPlot.angleSm);
-      pushToBuffer(torqueBuffer, resPlot.tau);
-      pushToBuffer(timeBuffer, timeLabel);
-      trimBuffers(PLOT_BUFFER_LEN);
+      updateInterpretation(focusJoint, results[focusJoint]);
 
-      angleChart.data.labels = timeBuffer.slice();
-      angleChart.data.datasets[0].data = angleBuffer.slice();
-      angleChart.update('none');
-
-      torqueChart.data.labels = timeBuffer.slice();
-      torqueChart.data.datasets[0].data = torqueBuffer.slice();
-      torqueChart.update('none');
-
-      // Interpretation
-      updateInterpretation(focusJoint, resPlot);
-
-      // Recording: joint-level only
       if(recording){
-        const sample = {
-          timeISO: new Date().toISOString(),
-          timeMs: now,
-          subjectMass: anthro.subjectMass,
-          subjectHeight: anthro.subjectHeight
-        };
-        for(const j of JOINTS_OF_INTEREST){
-          const rr = results[j];
-          if(!rr) continue;
-          sample[`${j}_angle`]   = rr.angle;
-          sample[`${j}_angleSm`] = rr.angleSm;
-          sample[`${j}_vel`]     = rr.vel;
-          sample[`${j}_accel`]   = rr.accel;
-          sample[`${j}_tau`]     = rr.tau;
+        const row = { timeISO: new Date().toISOString(), timeMs: now };
+        for(const j of selected){
+          const r = results[j];
+          row[`${j}_angle`] = r?.angleSm;
+          row[`${j}_vel`]   = r?.vel;
+          row[`${j}_tau`]   = r?.tau;
         }
-        samples.push(sample);
+        samples.push(row);
+        sampleCount.textContent = String(samples.length);
       }
     }
 
-    function drawSkeleton(lm){
-      ctx.lineWidth=2;
-      ctx.strokeStyle='rgba(50,255,150,0.9)';
-      const pairs = [
-        [11,13],[13,15],[12,14],[14,16], // arms
-        [11,12],                         // shoulders
-        [23,24],[11,23],[12,24],         // trunk
-        [23,25],[25,27],[24,26],[26,28]  // legs
-      ];
-      for(const [i,j] of pairs){
-        const a=lm[i], b=lm[j];
-        if(a && b){
-          ctx.beginPath();
-          ctx.moveTo(a.x,a.y);
-          ctx.lineTo(b.x,b.y);
-          ctx.stroke();
-        }
-      }
-      for(const p of lm){
-        ctx.beginPath();
-        ctx.arc(p.x,p.y,3,0,Math.PI*2);
-        ctx.fillStyle='aqua';
-        ctx.fill();
-      }
-    }
+    kinBody.addEventListener('click', (e)=>{
+      const tr = e.target.closest('tr');
+      if(!tr) return;
+      const j = tr.dataset.joint;
+      if(j) focusJoint = j;
+    });
 
-    function drawArrow(x1,y1,x2,y2,label){
-      ctx.beginPath();
-      ctx.moveTo(x1,y1);
-      ctx.lineTo(x2,y2);
-      ctx.stroke();
-
-      const angle = Math.atan2(y2-y1, x2-x1);
-      const head = 5;
-      ctx.beginPath();
-      ctx.moveTo(x2,y2);
-      ctx.lineTo(x2 - head*Math.cos(angle-0.4), y2 - head*Math.sin(angle-0.4));
-      ctx.lineTo(x2 - head*Math.cos(angle+0.4), y2 - head*Math.sin(angle+0.4));
-      ctx.closePath();
-      ctx.fill();
-
-      if(label){
-        ctx.font = '9px system-ui';
-        ctx.textAlign = 'left';
-        ctx.fillText(label, x2+3, y2-3);
-      }
-    }
-
-    function drawOverlay(lm, results){
-      ctx.clearRect(0,0,overlay.width,overlay.height);
-      drawSkeleton(lm);
-
-      const joint = focusJoint;
-      const res = results[joint];
-      if(!res) return;
-
-      const insetSize = 150;
-      const margin = 12;
-      const x0 = overlay.width - insetSize - margin;
-      const y0 = margin;
-      const cx = x0 + insetSize/2;
-      const cy = y0 + insetSize*0.65;
-
-      ctx.save();
-      ctx.fillStyle = 'rgba(15,23,42,0.85)';
-      ctx.strokeStyle = 'rgba(148,163,184,0.8)';
-      ctx.lineWidth = 1.2;
-      if(ctx.roundRect){
-        ctx.beginPath();
-        ctx.roundRect(x0, y0, insetSize, insetSize, 10);
-        ctx.fill();
-        ctx.stroke();
-      } else {
-        ctx.fillRect(x0, y0, insetSize, insetSize);
-        ctx.strokeRect(x0, y0, insetSize, insetSize);
-      }
-
-      // 2-link cartoon model
-      const L1 = insetSize * 0.25;
-      const L2 = insetSize * 0.22;
-
-      const angleDeg = isFinite(res.angleSm) ? res.angleSm : res.angle;
-      const angleRad = (angleDeg || 0) * Math.PI/180;
-
-      const baseX = cx;
-      const baseY = cy;
-
-      const th1 = -Math.PI/2 + 0.4; // proximal reference
-      const jointX = baseX + L1 * Math.cos(th1);
-      const jointY = baseY + L1 * Math.sin(th1);
-
-      const th2 = th1 + (Math.PI - angleRad);
-      const endX = jointX + L2 * Math.cos(th2);
-      const endY = jointY + L2 * Math.sin(th2);
-
-      // Proximal link
-      ctx.strokeStyle = 'rgba(56,189,248,0.9)';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(baseX, baseY);
-      ctx.lineTo(jointX, jointY);
-      ctx.stroke();
-
-      // Distal link
-      ctx.strokeStyle = 'rgba(34,197,94,0.9)';
-      ctx.beginPath();
-      ctx.moveTo(jointX, jointY);
-      ctx.lineTo(endX, endY);
-      ctx.stroke();
-
-      // Joints
-      ctx.fillStyle = 'white';
-      ctx.beginPath(); ctx.arc(baseX, baseY, 3, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.arc(jointX, jointY, 4, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.arc(endX, endY, 3, 0, Math.PI*2); ctx.fill();
-
-      // Gravity vector at distal COM
-      const comX = (jointX + endX)/2;
-      const comY = (jointY + endY)/2;
-      const gLen = insetSize*0.18;
-      ctx.strokeStyle = 'rgba(248,250,252,0.9)';
-      ctx.fillStyle = 'rgba(248,250,252,0.9)';
-      drawArrow(comX, comY, comX, comY + gLen, 'mg');
-
-      // Joint reaction at proximal joint (opposite to gravity)
-      const rLen = gLen * 0.9;
-      drawArrow(jointX, jointY, jointX, jointY - rLen, 'R');
-
-      // Torque arrow if available
-      const tau = res.tau;
-      if(isFinite(tau)){
-        const sign = tau >= 0 ? 1 : -1;
-        const arrowLen = Math.min(insetSize*0.2, Math.log10(1+Math.abs(tau))*12);
-        const arrowAngle = th2 + sign * Math.PI/2;
-        const ax1 = jointX;
-        const ay1 = jointY;
-        const ax2 = ax1 + arrowLen * Math.cos(arrowAngle);
-        const ay2 = ay1 + arrowLen * Math.sin(arrowAngle);
-
-        ctx.strokeStyle = 'rgba(251,191,36,0.95)';
-        ctx.fillStyle = 'rgba(251,191,36,0.95)';
-        drawArrow(ax1, ay1, ax2, ay2, 'τ');
-      }
-
-      // Labels + teaching notes
-      ctx.fillStyle = '#e5e7eb';
-      ctx.font = '10px system-ui, sans-serif';
-      ctx.textAlign = 'left';
-      ctx.fillText(joint, x0 + 8, y0 + 14);
-
-      const angleText = `θ ≈ ${isFinite(angleDeg)?angleDeg.toFixed(1):'--'}°`;
-      const tauText   = `τ ≈ ${isFinite(tau)?tau.toFixed(2):'--'} Nm`;
-      ctx.fillText(angleText, x0 + 8, y0 + insetSize - 32);
-      ctx.fillText(tauText,   x0 + 8, y0 + insetSize - 18);
-
-      if(teachingModeCheckbox && teachingModeCheckbox.checked){
-        ctx.font = '9px system-ui, sans-serif';
-        const chainLabelMap = {upper:'Upper limb chain', lower:'Lower limb chain', full:'Full body'};
-        const chainLabel = chainLabelMap[chainViewSelect.value] || 'Full body';
-        ctx.fillText(`Chain: ${chainLabel}`, x0 + 8, y0 + 28);
-        ctx.fillText('mg: segment weight (downward)', x0 + 8, y0 + 42);
-        ctx.fillText('R: joint reaction (upward)',    x0 + 8, y0 + 54);
-        ctx.fillText('τ: net joint moment',           x0 + 8, y0 + 66);
-      }
-
-      ctx.restore();
-    }
-
-    // --- Automatic interpretation ---
-
-    function prettyJointName(j){
-      const side = j.startsWith('left') ? 'Left' :
-                   j.startsWith('right') ? 'Right' : '';
-      const base = j.replace(/^left|^right/,'');
-      if(j === 'torso') return 'Torso';
-      return `${side} ${base.charAt(0).toUpperCase()}${base.slice(1)}`;
-    }
-
-    function jointRegion(j){
-      if(j === 'torso') return 'Trunk';
-      if(/Shoulder|Elbow|Wrist/i.test(j)) return 'Upper limb';
-      if(/Hip|Knee|Ankle/i.test(j)) return 'Lower limb';
-      return 'Whole body';
-    }
-
-    function flexionDescriptor(angleDeg, joint){
-      if(!isFinite(angleDeg)) return 'angle not available';
-      // For our geometric definition: 180° ~ straight, smaller ~ more flexed
-      if(angleDeg >= 165) return 'near full extension';
-      if(angleDeg >= 135) return 'slight flexion';
-      if(angleDeg >= 95)  return 'moderate flexion';
-      if(angleDeg >= 60)  return 'deep flexion';
-      return 'very deep flexion';
-    }
-
-    function velocityDescriptor(vel){
-      if(!isFinite(vel)) return 'motion speed unknown';
-      const v = Math.abs(vel);
-      if(v < 5)   return 'almost static';
-      if(v < 30)  return 'slow / controlled movement';
-      if(v < 90)  return 'moderate speed movement';
-      return 'fast / ballistic movement';
-    }
-
-    function torqueDescriptor(tau){
-      if(!isFinite(tau)) return 'net joint torque not estimated';
-      const mag = Math.abs(tau);
-      let level;
-      if(mag < 5) level = 'low net joint torque';
-      else if(mag < 30) level = 'moderate net joint torque';
-      else level = 'high net joint torque';
-      const direction = tau >= 0 ? 'counter-clockwise (by this convention)' : 'clockwise (by this convention)';
-      return `${level}; direction ${direction}`;
-    }
-
-    function chainLabelText(){
-      const m = {upper:'Upper limb chain focus', lower:'Lower limb chain focus', full:'Full body context'};
-      return m[chainViewSelect.value] || 'Full body context';
-    }
-
-    function updateInterpretation(joint, r){
-      if(!interpText) return;
-      if(!r || (!isFinite(r.angleSm) && !isFinite(r.angle))){
-        interpText.textContent = 'Waiting for a stable pose and visible landmarks...';
+    // ---------- CSV download ----------
+    function downloadCSV(){
+      if(samples.length === 0){
+        setStatus('No samples to export');
         return;
       }
-
-      const name = prettyJointName(joint);
-      const region = jointRegion(joint);
-      const angleDeg = isFinite(r.angleSm) ? r.angleSm : r.angle;
-      const vel = r.vel;
-      const tau = r.tau;
-
-      const line1 = `${name} (${region}) — ${chainLabelText()}`;
-      const line2 = `Angle: ≈ ${isFinite(angleDeg)?angleDeg.toFixed(1):'--'}° → ${flexionDescriptor(angleDeg, joint)}.`;
-      const line3 = `Angular velocity: ≈ ${isFinite(vel)?vel.toFixed(1):'--'} °/s → ${velocityDescriptor(vel)}.`;
-      const line4 = `Net torque: ${isFinite(tau)?tau.toFixed(2):'--'} Nm → ${torqueDescriptor(tau)}.`;
-
-      let teachingExtra = '';
-      if(teachingModeCheckbox && teachingModeCheckbox.checked){
-        if(/Knee|Hip|Ankle/i.test(joint)){
-          teachingExtra =
-            '\nTeaching note: For lower-limb joints, larger torque magnitudes usually reflect higher muscle demand (e.g. quadriceps or plantarflexors) to control body weight relative to gravity.';
-        }else if(/Shoulder|Elbow|Wrist/i.test(joint)){
-          teachingExtra =
-            '\nTeaching note: In the upper limb, net torque combines shoulder/elbow muscles plus any external load in the hand. Positive vs negative here just sets arrow direction in the diagram.';
-        }else if(joint === 'torso'){
-          teachingExtra =
-            '\nTeaching note: Torso angle gives a simple proxy of trunk flexion. Larger angles here mean more forward lean relative to vertical.';
-        }
-      }
-
-      interpText.textContent = `${line1}\n${line2}\n${line3}\n${line4}${teachingExtra}`;
-    }
-
-    // --- CSV ---
-
-    function handleDownloadCSV(){
-      if(samples.length===0){
-        alert('No samples recorded');
-        return;
-      }
-      const baseCols = ['timeISO','timeMs','subjectMass','subjectHeight'];
-      const jointCols = [];
-      for(const j of JOINTS_OF_INTEREST){
-        jointCols.push(`${j}_angle`,`${j}_angleSm`,`${j}_vel`,`${j}_accel`,`${j}_tau`);
-      }
-      const cols = baseCols.concat(jointCols);
-
+      const cols = Object.keys(samples[0]);
       const rows = [cols.join(',')];
       for(const s of samples){
-        rows.push(cols.map(k => (s[k]===undefined?'':String(s[k]).replace(/\r?\n/g,' '))).join(','));
+        rows.push(cols.map(k=>{
+          const v = s[k];
+          if(v === undefined || v === null) return '';
+          if(typeof v === 'number') return Number.isFinite(v) ? v.toFixed(6) : '';
+          return String(v).replace(/\r?\n/g,' ');
+        }).join(','));
       }
       const blob = new Blob([rows.join('\n')], {type:'text/csv'});
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'jun_wei_kinematic_lab_joints.csv';
+      a.download = 'JunWeiBiodynamicLab_joints.csv';
       a.click();
       URL.revokeObjectURL(url);
+      setStatus(`CSV downloaded (${samples.length} rows)`);
     }
 
+    // ---------- Status ----------
+    let statusTimer = null;
+    function setStatus(msg){
+      statusText.textContent = msg;
+      if(statusTimer) clearTimeout(statusTimer);
+      statusTimer = setTimeout(()=>{
+        statusText.textContent = (stream?'Camera running':'Idle') + (recording?' • Recording':'');
+      }, 1500);
+    }
+
+    // ---------- Cleanup ----------
     window.addEventListener('beforeunload', ()=>{
-      if(stream && stream.getTracks){
-        stream.getTracks().forEach(t=>t.stop());
-      }
-      if(poseLandmarker){
-        poseLandmarker.close();
-      }
+      try{
+        if(stream && stream.getTracks){
+          stream.getTracks().forEach(t=>t.stop());
+        }
+        if(poseLandmarker){
+          poseLandmarker.close();
+        }
+      }catch(_){}
+    });
+
+    window.addEventListener('resize', ()=>{
+      if(video && video.videoWidth) resizeCanvasToVideo();
     });
   </script>
 </body>
