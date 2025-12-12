@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en">
-<head>
+head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Junwei Biodynamic Lab</title>
@@ -8,7 +8,7 @@
     body{font-family:system-ui,Segoe UI,Roboto,Arial;background:#0f172a;color:#e6eef8;margin:0}
     .app{display:grid;grid-template-columns:380px 1fr;gap:12px;padding:12px}
     .panel{background:#0b1220;padding:12px;border-radius:10px;box-shadow:0 6px 24px rgba(2,6,23,.6)}
-    .controls button{width:100%;margin:6px 0;padding:10px;border-radius:8px;border:none;background:#2563eb;color:white;font-weight:600}
+    .controls button{width:100%;margin:6px 0;padding:10px;border-radius:8px;border:none;background:#2563eb;color:white;font-weight:600;cursor:pointer}
     #videoWrap{position:relative}
     video, canvas{width:100%;height:auto;border-radius:10px}
     table{width:100%;border-collapse:collapse;color:#cfe6ff}
@@ -33,7 +33,7 @@
         <label class="small">Recording</label>
         <button id="startRec">Start recording</button>
         <button id="stopRec">Stop recording</button>
-        <button id="downloadCSV">Download CSV</button>
+        <button id="downloadCSV">Download joint CSV</button>
       </div>
 
       <h3>Joint kinematics (live)</h3>
@@ -62,19 +62,28 @@
       <label class="small">One-Euro filter: beta</label>
       <input id="beta" type="number" step="0.01" value="0.007" />
 
-      <h3>Plot settings</h3>
-      <label class="small">Plot joints</label>
+      <h3>Plot / FBD joint</h3>
+      <label class="small">Select joint</label>
       <select id="plotJoint" style="width:100%">
+        <option value="torso">Torso</option>
+        <option value="leftShoulder">Left Shoulder</option>
+        <option value="rightShoulder">Right Shoulder</option>
         <option value="leftElbow">Left Elbow</option>
         <option value="rightElbow">Right Elbow</option>
+        <option value="leftWrist">Left Wrist</option>
+        <option value="rightWrist">Right Wrist</option>
+        <option value="leftHip">Left Hip</option>
+        <option value="rightHip">Right Hip</option>
         <option value="leftKnee">Left Knee</option>
         <option value="rightKnee">Right Knee</option>
+        <option value="leftAnkle">Left Ankle</option>
+        <option value="rightAnkle">Right Ankle</option>
       </select>
       <label class="small">Buffer length (samples)</label>
       <input id="bufferLen" type="number" value="200" />
 
       <p class="muted">
-        Notes: This demo uses MediaPipe BlazePose (client-side) and simplified inverse dynamics for educational/demo purposes only.
+        Notes: BlazePose + simplified inverse dynamics. High-fps capable (up to ~150 fps depending on device / browser).
       </p>
     </div>
 
@@ -97,11 +106,9 @@
     </div>
   </div>
 
-  <!-- Libraries: Chart.js (we'll import MediaPipe Tasks in a module script) -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
   <script type="module">
-    // Import MediaPipe Tasks Vision (BlazePose / PoseLandmarker)
     import { FilesetResolver, PoseLandmarker } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0';
 
     const video = document.getElementById('video');
@@ -131,11 +138,19 @@
     let samples = [];
     let lastAngles = {};
     let lastTime = null;
+    let loopRunning = false;
 
-    // anthropometrics params (internal: derived from mass & height)
-    // Rough proportions from standard anthropometry (Winter-style):
-    // upperArmL ≈ 0.188 * height, forearmL ≈ 0.146 * height
-    // upperArmM ≈ 2.8% body mass, forearmM ≈ 1.6% body mass
+    const JOINTS_OF_INTEREST = [
+      'torso',
+      'leftShoulder','rightShoulder',
+      'leftElbow','rightElbow',
+      'leftWrist','rightWrist',
+      'leftHip','rightHip',
+      'leftKnee','rightKnee',
+      'leftAnkle','rightAnkle'
+    ];
+
+    // anthropometrics (derived from mass & height)
     let anthro = {
       subjectMass: 70,
       subjectHeight: 1.75,
@@ -157,8 +172,7 @@
       anthro.upperArmM = 0.028 * mass;
       anthro.forearmM = 0.016 * mass;
 
-      // COM and inertias (rough)
-      anthro.upperArmCOM = anthro.upperArmL * 0.436; // Winter
+      anthro.upperArmCOM = anthro.upperArmL * 0.436;
       anthro.forearmCOM = anthro.forearmL * 0.430;
       anthro.upperArmI = (anthro.upperArmM * Math.pow(anthro.upperArmL,2)) * 0.05;
       anthro.forearmI = (anthro.forearmM * Math.pow(anthro.forearmL,2)) * 0.04;
@@ -178,9 +192,9 @@
     resetAnthro.addEventListener('click', resetAnthroFn);
     resetAnthroFn();
 
-    // One Euro Filter implementation (for smoothing angles/landmarks)
+    // One Euro Filter
     class OneEuroFilter {
-      constructor(freq=120, minCutoff=1.0, beta=0.007, dcutoff=1.0){
+      constructor(freq=150, minCutoff=1.0, beta=0.007, dcutoff=1.0){
         this.freq = freq; this.minCutoff = minCutoff; this.beta = beta; this.dcutoff = dcutoff;
         this.xPrev = null; this.dxPrev = 0; this.lastTime = null;
       }
@@ -191,7 +205,9 @@
       }
       filter(x, t=null){
         if(this.lastTime && t){
-          this.freq = 1.0/((t - this.lastTime)/1000);
+          const dt = (t - this.lastTime) / 1000;
+          const safeDt = Math.max(1/300, Math.min(dt, 1/10)); // clamp 0.0033–0.1s
+          this.freq = 1.0 / safeDt;
         }
         this.lastTime = t || this.lastTime;
         if(this.xPrev === null){ this.xPrev = x; return x; }
@@ -206,7 +222,6 @@
       }
     }
 
-    // charts
     const angleCtx = document.getElementById('angleChart').getContext('2d');
     const torqueCtx = document.getElementById('torqueChart').getContext('2d');
     const angleChart = new Chart(angleCtx, {
@@ -228,7 +243,6 @@
       while(timeBuffer.length>len) timeBuffer.shift();
     }
 
-    // utility: 3D angle between vectors (deg)
     function angleBetween3D(a,b,c){
       const v1 = {x:a.x-b.x, y:a.y-b.y, z:(a.z||0)-(b.z||0)};
       const v2 = {x:c.x-b.x, y:c.y-b.y, z:(c.z||0)-(b.z||0)};
@@ -240,7 +254,25 @@
       return Math.acos(cos)*180/Math.PI;
     }
 
-    // inverse dynamics (simplified 2D planar chain per arm)
+    // Torso angle: angle of vector (midHip -> midShoulder) relative to vertical
+    function torsoAngleDeg(lm, idx){
+      const lSh = lm[idx('leftShoulder')];
+      const rSh = lm[idx('rightShoulder')];
+      const lHip = lm[idx('leftHip')];
+      const rHip = lm[idx('rightHip')];
+      if(!lSh || !rSh || !lHip || !rHip) return NaN;
+      const midSh = {x:(lSh.x+rSh.x)/2, y:(lSh.y+rSh.y)/2};
+      const midHip = {x:(lHip.x+rHip.x)/2, y:(lHip.y+rHip.y)/2};
+      const vx = midSh.x - midHip.x;
+      const vy = midSh.y - midHip.y;
+      // vertical up is (0,-1) in image coords
+      const dot = vx*0 + vy*(-1);
+      const mag = Math.hypot(vx,vy);
+      if(mag===0) return NaN;
+      let cos = dot/mag; cos = Math.max(-1, Math.min(1, cos));
+      return Math.acos(cos)*180/Math.PI; // 0 = upright, larger = more flexed
+    }
+
     function inverseDynamicsArm(theta_shoulder_deg, theta_elbow_deg, theta_shoulder_vel, theta_elbow_vel, theta_shoulder_acc, theta_elbow_acc){
       const g = 9.80665;
       const ua = anthro.upperArmM; const fa = anthro.forearmM;
@@ -266,13 +298,17 @@
       return {tau_shoulder:tau1, tau_elbow:tau2};
     }
 
-    // Back-camera preferring, with fallbacks
     async function getBackCameraStream(){
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
         throw new Error('Camera API not supported in this browser.');
       }
       const constraintsPreferred = {
-        video: { facingMode: { exact: 'environment' }, width: {ideal:1280}, height: {ideal:720} },
+        video: {
+          facingMode: { exact: 'environment' },
+          width: {ideal:1280},
+          height: {ideal:720},
+          frameRate: { ideal: 150, max: 150 }
+        },
         audio:false
       };
       try{
@@ -283,15 +319,22 @@
         const preferred = cams.find(c=>/back|rear|environment|facing back/i.test(c.label));
         if(preferred){
           return await navigator.mediaDevices.getUserMedia({
-            video:{deviceId:{exact:preferred.deviceId}, width:{ideal:1280}, height:{ideal:720}},
+            video:{
+              deviceId:{exact:preferred.deviceId},
+              width:{ideal:1280},
+              height:{ideal:720},
+              frameRate:{ideal:150, max:150}
+            },
             audio:false
           });
         }
-        return await navigator.mediaDevices.getUserMedia({video:{width:640,height:480}, audio:false});
+        return await navigator.mediaDevices.getUserMedia({
+          video:{width:640,height:480, frameRate:{ideal:60}},
+          audio:false
+        });
       }
     }
 
-    // Initialize MediaPipe PoseLandmarker
     async function initPoseLandmarker(){
       const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm');
       poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
@@ -303,34 +346,35 @@
     }
     await initPoseLandmarker();
 
-    // Per-joint OneEuro filters map keyed by joint name
     const filters = {};
     function getFilter(key){
       const minCutoff = Number(minCutoffInput.value) || 1.0;
       const beta = Number(betaInput.value) || 0.007;
-      if(!filters[key]) filters[key] = new OneEuroFilter(120, minCutoff, beta);
+      if(!filters[key]) filters[key] = new OneEuroFilter(150, minCutoff, beta);
       return filters[key];
     }
 
-    // Keypoint mapping for BlazePose: 0..32 landmarks
     const kpNames = [
       'nose','leftEyeInner','leftEye','leftEyeOuter','rightEyeInner','rightEye','rightEyeOuter','leftEar','rightEar','mouthLeft','mouthRight',
       'leftShoulder','rightShoulder','leftElbow','rightElbow','leftWrist','rightWrist','leftPinky','rightPinky','leftIndex','rightIndex','leftThumb','rightThumb',
       'leftHip','rightHip','leftKnee','rightKnee','leftAnkle','rightAnkle','leftHeel','rightHeel','leftFootIndex','rightFootIndex'
     ];
+    const idx = name => kpNames.indexOf(name);
 
-    // Start / stop camera
     startCam.addEventListener('click', async ()=>{
       try{
         stream = await getBackCameraStream();
         video.srcObject = stream;
         video.onloadedmetadata = () => {
-          overlay.width = video.videoWidth;
-          overlay.height = video.videoHeight;
+          overlay.width = video.videoWidth || overlay.clientWidth;
+          overlay.height = video.videoHeight || overlay.clientHeight;
         };
         await video.play();
         lastTime = performance.now();
-        runLoop();
+        if(!loopRunning){
+          loopRunning = true;
+          runLoop();
+        }
       }catch(err){
         alert('Camera error: '+err.message);
         console.error(err);
@@ -342,9 +386,9 @@
         stream.getTracks().forEach(t=>t.stop());
         stream = null;
       }
+      loopRunning = false;
     });
 
-    // Recording
     startRec.addEventListener('click', ()=>{
       recording=true; samples=[]; lastAngles={};
       alert('Recording started');
@@ -355,10 +399,9 @@
     });
     downloadCSVBtn.addEventListener('click', handleDownloadCSV);
 
-    // Main loop - use detectForVideo with timestamp
     async function runLoop(){
-      const sampleMs = 33; // ~30Hz
       async function step(){
+        if(!loopRunning) return;
         if(!poseLandmarker || !video || video.readyState < 2){
           requestAnimationFrame(step);
           return;
@@ -367,117 +410,159 @@
         const detection = await poseLandmarker.detectForVideo(video, now);
         const pose = (detection && detection.landmarks && detection.landmarks.length>0) ? detection.landmarks[0] : null;
         if(pose) processPose(pose, now);
-        setTimeout(()=>requestAnimationFrame(step), sampleMs);
+        requestAnimationFrame(step);
       }
-      step();
+      requestAnimationFrame(step);
+    }
+
+    function updateJoint(name, rawAngle, dt){
+      const f = getFilter(name);
+      const angleSm = f.filter(rawAngle, performance.now());
+      const prev = lastAngles[name] || {angle:angleSm, vel:0};
+      const vel = isFinite(angleSm) && isFinite(prev.angle) ? (angleSm - prev.angle)/dt : 0;
+      const accel = isFinite(vel) && isFinite(prev.vel) ? (vel - prev.vel)/dt : 0;
+      lastAngles[name] = {angle:angleSm, vel};
+      return {angle:rawAngle, angleSm, vel, accel, tau:NaN};
     }
 
     function processPose(landmarks, now){
+      const vidW = video.videoWidth || overlay.width;
+      const vidH = video.videoHeight || overlay.height;
+
       const lm = landmarks.map(p=>({
-        x:p.x*video.videoWidth,
-        y:p.y*video.videoHeight,
+        x:p.x*vidW,
+        y:p.y*vidH,
         z:p.z,
         score:(p.hasOwnProperty('presence')?p.presence:1)
       }));
-      drawLandmarks(lm);
 
-      const triples = [
-        ['leftShoulder','leftElbow','leftWrist'],
-        ['rightShoulder','rightElbow','rightWrist'],
-        ['leftHip','leftKnee','leftAnkle'],
-        ['rightHip','rightKnee','rightAnkle']
-      ];
-      const labels = ['leftElbow','rightElbow','leftKnee','rightKnee'];
-      const results = {};
-      const dt = (now - (lastTime||now))/1000;
+      const dtRaw = (now - (lastTime||now))/1000;
+      const dt = Math.max(1/300, Math.min(dtRaw, 1/10));
       lastTime = now;
 
-      for(let i=0;i<triples.length;i++){
-        const [aN,bN,cN] = triples[i];
-        const a = lm[kpNames.indexOf(aN)];
-        const b = lm[kpNames.indexOf(bN)];
-        const c = lm[kpNames.indexOf(cN)];
-        const angle = angleBetween3D(a,b,c);
-        const f = getFilter(labels[i]);
-        const angleSm = f.filter(angle, now);
-        const prev = lastAngles[labels[i]] || {angle:angle, vel:0};
-        const vel = isFinite(angleSm) && isFinite(prev.angle) ? (angleSm - prev.angle)/dt : 0;
-        const accel = isFinite(vel) && isFinite(prev.vel) ? (vel - prev.vel)/dt : 0;
-        lastAngles[labels[i]] = {angle:angleSm, vel};
+      const results = {};
 
-        let tau_sh=NaN, tau_el=NaN;
-        if(i===0 || i===1){
-          const shoulder = lm[kpNames.indexOf((i===0)?'leftShoulder':'rightShoulder')];
-          const hip = lm[kpNames.indexOf((i===0)?'leftHip':'rightHip')];
-          const shAngle = angleBetween3D(hip, shoulder, b);
-          const shoulderKey = (i===0)?'leftShoulder':'rightShoulder';
-          const shPrev = lastAngles[shoulderKey] || {angle:shAngle, vel:0};
-          const shSm = getFilter(shoulderKey).filter(shAngle, now);
-          const shVel = (shSm - shPrev.angle)/dt;
-          const shAccel = (shVel - shPrev.vel)/dt;
-          lastAngles[shoulderKey] = {angle:shSm, vel:shVel};
-          const inv = inverseDynamicsArm(shSm, angleSm, shVel, vel, shAccel, accel);
-          tau_sh = inv.tau_shoulder;
-          tau_el = inv.tau_elbow;
-        }
-        results[labels[i]] = {angle, angleSm, vel, accel, tau_sh, tau_el};
+      // Torso
+      const torsoAng = torsoAngleDeg(lm, idx);
+      results['torso'] = updateJoint('torso', torsoAng, dt);
+
+      // Upper limbs
+      const ls = lm[idx('leftShoulder')], rs = lm[idx('rightShoulder')];
+      const le = lm[idx('leftElbow')], re = lm[idx('rightElbow')];
+      const lw = lm[idx('leftWrist')], rw = lm[idx('rightWrist')];
+      const li = lm[idx('leftIndex')], ri = lm[idx('rightIndex')];
+
+      const lh = lm[idx('leftHip')], rh = lm[idx('rightHip')];
+      const lk = lm[idx('leftKnee')], rk = lm[idx('rightKnee')];
+      const la = lm[idx('leftAnkle')], ra = lm[idx('rightAnkle')];
+      const lfi = lm[idx('leftFootIndex')], rfi = lm[idx('rightFootIndex')];
+
+      // Shoulders: hip-shoulder-elbow
+      if(lh && ls && le) results['leftShoulder']  = updateJoint('leftShoulder',  angleBetween3D(lh, ls, le), dt);
+      if(rh && rs && re) results['rightShoulder'] = updateJoint('rightShoulder', angleBetween3D(rh, rs, re), dt);
+
+      // Elbows: shoulder-elbow-wrist
+      if(ls && le && lw) results['leftElbow']  = updateJoint('leftElbow',  angleBetween3D(ls, le, lw), dt);
+      if(rs && re && rw) results['rightElbow'] = updateJoint('rightElbow', angleBetween3D(rs, re, rw), dt);
+
+      // Wrists: elbow-wrist-index
+      if(le && lw && li) results['leftWrist']  = updateJoint('leftWrist',  angleBetween3D(le, lw, li), dt);
+      if(re && rw && ri) results['rightWrist'] = updateJoint('rightWrist', angleBetween3D(re, rw, ri), dt);
+
+      // Hips: shoulder-hip-knee (using same-side shoulder)
+      if(ls && lh && lk) results['leftHip']  = updateJoint('leftHip',  angleBetween3D(ls, lh, lk), dt);
+      if(rs && rh && rk) results['rightHip'] = updateJoint('rightHip', angleBetween3D(rs, rh, rk), dt);
+
+      // Knees: hip-knee-ankle
+      if(lh && lk && la) results['leftKnee']  = updateJoint('leftKnee',  angleBetween3D(lh, lk, la), dt);
+      if(rh && rk && ra) results['rightKnee'] = updateJoint('rightKnee', angleBetween3D(rh, rk, ra), dt);
+
+      // Ankles: knee-ankle-footIndex
+      if(lk && la && lfi) results['leftAnkle']  = updateJoint('leftAnkle',  angleBetween3D(lk, la, lfi), dt);
+      if(rk && ra && rfi) results['rightAnkle'] = updateJoint('rightAnkle', angleBetween3D(rk, ra, rfi), dt);
+
+      // Inverse dynamics for arms (torque at shoulder & elbow)
+      const lSh = results['leftShoulder'],  lEl = results['leftElbow'];
+      const rSh = results['rightShoulder'], rEl = results['rightElbow'];
+      if(lSh && lEl){
+        const inv = inverseDynamicsArm(lSh.angleSm, lEl.angleSm, lSh.vel, lEl.vel, lSh.accel, lEl.accel);
+        lSh.tau = inv.tau_shoulder;
+        lEl.tau = inv.tau_elbow;
       }
+      if(rSh && rEl){
+        const inv = inverseDynamicsArm(rSh.angleSm, rEl.angleSm, rSh.vel, rEl.vel, rSh.accel, rEl.accel);
+        rSh.tau = inv.tau_shoulder;
+        rEl.tau = inv.tau_elbow;
+      }
+      // Other joints keep tau = NaN (no inverse dynamics model yet)
 
-      // update UI table
+      drawOverlay(lm, results);
+
+      // UI table (only JOINTS_OF_INTEREST)
       kinTable.innerHTML = '';
-      for(const key of Object.keys(results)){
+      for(const key of JOINTS_OF_INTEREST){
         const r = results[key];
+        if(!r) continue;
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td>${key}</td>
           <td>${isFinite(r.angle)?r.angle.toFixed(1):'--'}</td>
           <td>${isFinite(r.angleSm)?r.angleSm.toFixed(1):'--'}</td>
           <td>${isFinite(r.vel)?r.vel.toFixed(1):'--'}</td>
-          <td>${isFinite(r.tau_el)?r.tau_el.toFixed(2):'--'}</td>
+          <td>${isFinite(r.tau)?r.tau.toFixed(2):'--'}</td>
         `;
         kinTable.appendChild(tr);
       }
 
+      // Charts for selected joint
       const jointToPlot = plotJointSelect.value;
       const bufLen = Number(bufferLenInput.value) || 200;
-      const resPlot = results[jointToPlot] || Object.values(results)[0];
+      const resPlot = results[jointToPlot] || results['torso'] || Object.values(results)[0];
       const timeLabel = new Date().toLocaleTimeString();
+
       pushToBuffer(angleBuffer, resPlot.angleSm);
-      pushToBuffer(torqueBuffer, resPlot.tau_el);
+      pushToBuffer(torqueBuffer, resPlot.tau);
       pushToBuffer(timeBuffer, timeLabel);
       trimBuffers(bufLen);
+
       angleChart.data.labels = timeBuffer.slice();
       angleChart.data.datasets[0].data = angleBuffer.slice();
       angleChart.update('none');
+
       torqueChart.data.labels = timeBuffer.slice();
       torqueChart.data.datasets[0].data = torqueBuffer.slice();
       torqueChart.update('none');
 
+      // Recording: joint-level only
       if(recording){
-        const sample = {time:new Date().toISOString()};
-        for(let i=0;i<kpNames.length;i++){
-          const p=landmarks[i];
-          sample[`${kpNames[i]}_x`]=p.x;
-          sample[`${kpNames[i]}_y`]=p.y;
-          sample[`${kpNames[i]}_z`]=p.z;
-        }
-        for(const k of Object.keys(results)){
-          const rr = results[k];
-          sample[`${k}_angle`]=rr.angle;
-          sample[`${k}_angleSm`]=rr.angleSm;
-          sample[`${k}_vel`]=rr.vel;
-          sample[`${k}_tau_el`]=rr.tau_el;
-          sample[`${k}_tau_sh`]=rr.tau_sh;
+        const sample = {
+          timeISO: new Date().toISOString(),
+          timeMs: now,
+          subjectMass: anthro.subjectMass,
+          subjectHeight: anthro.subjectHeight
+        };
+        for(const j of JOINTS_OF_INTEREST){
+          const rr = results[j];
+          if(!rr) continue;
+          sample[`${j}_angle`]   = rr.angle;
+          sample[`${j}_angleSm`] = rr.angleSm;
+          sample[`${j}_vel`]     = rr.vel;
+          sample[`${j}_accel`]   = rr.accel;
+          sample[`${j}_tau`]     = rr.tau;
         }
         samples.push(sample);
       }
     }
 
-    function drawLandmarks(lm){
-      ctx.clearRect(0,0,overlay.width,overlay.height);
+    function drawSkeleton(lm){
       ctx.lineWidth=2;
       ctx.strokeStyle='rgba(50,255,150,0.9)';
-      const pairs = [ [11,13],[13,15],[12,14],[14,16],[11,12],[23,24],[11,23],[12,24] ];
+      const pairs = [
+        [11,13],[13,15],[12,14],[14,16], // arms
+        [11,12],                         // shoulders
+        [23,24],[11,23],[12,24],         // trunk
+        [23,25],[25,27],[24,26],[26,28]  // legs
+      ];
       for(const [i,j] of pairs){
         const a=lm[i], b=lm[j];
         if(a && b){
@@ -495,26 +580,164 @@
       }
     }
 
+    function drawArrow(x1,y1,x2,y2,label){
+      ctx.beginPath();
+      ctx.moveTo(x1,y1);
+      ctx.lineTo(x2,y2);
+      ctx.stroke();
+
+      const angle = Math.atan2(y2-y1, x2-x1);
+      const head = 5;
+      ctx.beginPath();
+      ctx.moveTo(x2,y2);
+      ctx.lineTo(x2 - head*Math.cos(angle-0.4), y2 - head*Math.sin(angle-0.4));
+      ctx.lineTo(x2 - head*Math.cos(angle+0.4), y2 - head*Math.sin(angle+0.4));
+      ctx.closePath();
+      ctx.fill();
+
+      if(label){
+        ctx.font = '9px system-ui';
+        ctx.textAlign = 'left';
+        ctx.fillText(label, x2+3, y2-3);
+      }
+    }
+
+    function drawOverlay(lm, results){
+      ctx.clearRect(0,0,overlay.width,overlay.height);
+      drawSkeleton(lm);
+
+      const joint = plotJointSelect.value;
+      const res = results[joint];
+      if(!res) return;
+
+      const insetSize = 150;
+      const margin = 12;
+      const x0 = overlay.width - insetSize - margin;
+      const y0 = margin;
+      const cx = x0 + insetSize/2;
+      const cy = y0 + insetSize*0.65;
+
+      ctx.save();
+      ctx.fillStyle = 'rgba(15,23,42,0.85)';
+      ctx.strokeStyle = 'rgba(148,163,184,0.8)';
+      ctx.lineWidth = 1.2;
+      if(ctx.roundRect){
+        ctx.beginPath();
+        ctx.roundRect(x0, y0, insetSize, insetSize, 10);
+        ctx.fill();
+        ctx.stroke();
+      } else {
+        ctx.fillRect(x0, y0, insetSize, insetSize);
+        ctx.strokeRect(x0, y0, insetSize, insetSize);
+      }
+
+      // 2-link cartoon model
+      const L1 = insetSize * 0.25;
+      const L2 = insetSize * 0.22;
+
+      const angleDeg = isFinite(res.angleSm) ? res.angleSm : res.angle;
+      const angleRad = (angleDeg || 0) * Math.PI/180;
+
+      const baseX = cx;
+      const baseY = cy;
+
+      const th1 = -Math.PI/2 + 0.4; // reference proximal orientation
+      const jointX = baseX + L1 * Math.cos(th1);
+      const jointY = baseY + L1 * Math.sin(th1);
+
+      const th2 = th1 + (Math.PI - angleRad);
+      const endX = jointX + L2 * Math.cos(th2);
+      const endY = jointY + L2 * Math.sin(th2);
+
+      // Proximal link
+      ctx.strokeStyle = 'rgba(56,189,248,0.9)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(baseX, baseY);
+      ctx.lineTo(jointX, jointY);
+      ctx.stroke();
+
+      // Distal link
+      ctx.strokeStyle = 'rgba(34,197,94,0.9)';
+      ctx.beginPath();
+      ctx.moveTo(jointX, jointY);
+      ctx.lineTo(endX, endY);
+      ctx.stroke();
+
+      // Joints
+      ctx.fillStyle = 'white';
+      ctx.beginPath(); ctx.arc(baseX, baseY, 3, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(jointX, jointY, 4, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(endX, endY, 3, 0, Math.PI*2); ctx.fill();
+
+      // Gravity vector at distal COM
+      const comX = (jointX + endX)/2;
+      const comY = (jointY + endY)/2;
+      const gLen = insetSize*0.18;
+      ctx.strokeStyle = 'rgba(248,250,252,0.9)';
+      ctx.fillStyle = 'rgba(248,250,252,0.9)';
+      drawArrow(comX, comY, comX, comY + gLen, 'mg');
+
+      // Joint reaction at proximal joint (opposite to gravity)
+      const rLen = gLen * 0.9;
+      drawArrow(jointX, jointY, jointX, jointY - rLen, 'R');
+
+      // Torque arrow if available
+      const tau = res.tau;
+      if(isFinite(tau)){
+        const sign = tau >= 0 ? 1 : -1;
+        const arrowLen = Math.min(insetSize*0.2, Math.log10(1+Math.abs(tau))*12);
+        const arrowAngle = th2 + sign * Math.PI/2;
+        const ax1 = jointX;
+        const ay1 = jointY;
+        const ax2 = ax1 + arrowLen * Math.cos(arrowAngle);
+        const ay2 = ay1 + arrowLen * Math.sin(arrowAngle);
+
+        ctx.strokeStyle = 'rgba(251,191,36,0.95)';
+        ctx.fillStyle = 'rgba(251,191,36,0.95)';
+        drawArrow(ax1, ay1, ax2, ay2, 'τ');
+      }
+
+      // Labels
+      ctx.fillStyle = '#e5e7eb';
+      ctx.font = '10px system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(joint, x0 + 8, y0 + 14);
+
+      const angleText = `θ ≈ ${isFinite(angleDeg)?angleDeg.toFixed(1):'--'}°`;
+      const tauText   = `τ ≈ ${isFinite(res.tau)?res.tau.toFixed(2):'--'} Nm`;
+      ctx.fillText(angleText, x0 + 8, y0 + insetSize - 30);
+      ctx.fillText(tauText,   x0 + 8, y0 + insetSize - 16);
+
+      ctx.restore();
+    }
+
     function handleDownloadCSV(){
       if(samples.length===0){
         alert('No samples recorded');
         return;
       }
-      const keys = Object.keys(samples[0]);
-      const rows = [keys.join(',')];
+      // Build columns in deterministic order
+      const baseCols = ['timeISO','timeMs','subjectMass','subjectHeight'];
+      const jointCols = [];
+      for(const j of JOINTS_OF_INTEREST){
+        jointCols.push(`${j}_angle`,`${j}_angleSm`,`${j}_vel`,`${j}_accel`,`${j}_tau`);
+      }
+      const cols = baseCols.concat(jointCols);
+
+      const rows = [cols.join(',')];
       for(const s of samples){
-        rows.push(keys.map(k => (s[k]===undefined?'':String(s[k]).replace(/\r?\n/g,' '))).join(','));
+        rows.push(cols.map(k => (s[k]===undefined?'':String(s[k]).replace(/\r?\n/g,' '))).join(','));
       }
       const blob = new Blob([rows.join('\n')], {type:'text/csv'});
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'mocap_full.csv';
+      a.download = 'junwei_biodynamic_lab_joints.csv';
       a.click();
       URL.revokeObjectURL(url);
     }
 
-    // cleanup
     window.addEventListener('beforeunload', ()=>{
       if(stream && stream.getTracks){
         stream.getTracks().forEach(t=>t.stop());
