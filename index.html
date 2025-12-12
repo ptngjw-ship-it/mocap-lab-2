@@ -1,1 +1,336 @@
-1
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Web Motion Capture — Single-file (HTML + JS)</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,Arial;background:#0f172a;color:#e6eef8;margin:0}
+    .app{display:grid;grid-template-columns:380px 1fr;gap:12px;padding:12px}
+    .panel{background:#0b1220;padding:12px;border-radius:10px;box-shadow:0 6px 24px rgba(2,6,23,.6)}
+    .controls button{width:100%;margin:6px 0;padding:10px;border-radius:8px;border:none;background:#2563eb;color:white;font-weight:600}
+    #videoWrap{position:relative}
+    video, canvas{width:100%;height:auto;border-radius:10px}
+    table{width:100%;border-collapse:collapse;color:#cfe6ff}
+    th,td{padding:6px;border-bottom:1px solid rgba(255,255,255,0.04);text-align:left;font-size:13px}
+    .small{font-size:12px;color:#9fb5d9}
+    .row{display:flex;gap:8px}
+    .col{flex:1}
+    .chartWrap{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+    input[type=number], select{background:#0b1220;border:1px solid #20314a;padding:8px;border-radius:6px;color:#e6eef8;width:100%}
+    label{display:block;margin-top:8px}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="panel" style="height:calc(100vh - 32px);overflow:auto">
+      <h2>Motion capture UI</h2>
+      <div class="controls">
+        <label class="small">Camera</label>
+        <button id="startCam">Start camera</button>
+        <button id="stopCam">Stop camera</button>
+        <label class="small">Recording</label>
+        <button id="startRec">Start recording</button>
+        <button id="stopRec">Stop recording</button>
+        <button id="downloadCSV">Download CSV</button>
+      </div>
+
+      <h3>Joint kinematics (live)</h3>
+      <table id="kinTable"><thead><tr><th>Joint</th><th>Angle (°)</th><th>Velocity (°/s)</th><th>Accel (°/s²)</th><th>InvDyn (Nm)</th></tr></thead><tbody></tbody></table>
+
+      <h3>Anthropometrics</h3>
+      <label class="small">Subject mass (kg)</label>
+      <input id="subjectMass" type="number" value="70" />
+      <label class="small">Upper arm length (m)</label>
+      <input id="upperArmL" type="number" step="0.01" value="0.30" />
+      <label class="small">Forearm length (m)</label>
+      <input id="forearmL" type="number" step="0.01" value="0.25" />
+      <label class="small">Upper arm mass (kg)</label>
+      <input id="upperArmM" type="number" step="0.1" value="1.5" />
+      <label class="small">Forearm mass (kg)</label>
+      <input id="forearmM" type="number" step="0.1" value="1.0" />
+      <div class="row"><button id="applyAnthro">Apply anthropometrics</button><button id="resetAnthro">Reset defaults</button></div>
+
+      <h3>Plot settings</h3>
+      <label class="small">Plot joints</label>
+      <select id="plotJoint" style="width:100%">
+        <option value="leftElbow">Left Elbow</option>
+        <option value="rightElbow">Right Elbow</option>
+        <option value="leftKnee">Left Knee</option>
+        <option value="rightKnee">Right Knee</option>
+      </select>
+      <label class="small">Buffer length (samples)</label>
+      <input id="bufferLen" type="number" value="200" />
+
+      <p class="small">Notes: This example uses client-side pose estimation and a planar inverse dynamics approximation for demo/education only.</p>
+    </div>
+
+    <div class="panel" id="videoPanel">
+      <div id="videoWrap">
+        <video id="video" playsinline></video>
+        <canvas id="overlay" ></canvas>
+      </div>
+
+      <div class="chartWrap">
+        <div class="panel" style="padding:8px;">
+          <h4 class="small">Angle (deg)</h4>
+          <canvas id="angleChart" height="200"></canvas>
+        </div>
+        <div class="panel" style="padding:8px;">
+          <h4 class="small">Torque (Nm)</h4>
+          <canvas id="torqueChart" height="200"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Libraries: TensorFlow.js + PoseNet + Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/posenet@2.2.1/dist/posenet.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <script>
+    // Enhanced motion capture demo with live charts and anthropometrics
+    const video = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
+    const ctx = overlay.getContext('2d');
+    const startCam = document.getElementById('startCam');
+    const stopCam = document.getElementById('stopCam');
+    const startRec = document.getElementById('startRec');
+    const stopRec = document.getElementById('stopRec');
+    const downloadCSV = document.getElementById('downloadCSV');
+    const kinTable = document.querySelector('#kinTable tbody');
+
+    const subjectMassInput = document.getElementById('subjectMass');
+    const upperArmLInput = document.getElementById('upperArmL');
+    const forearmLInput = document.getElementById('forearmL');
+    const upperArmMInput = document.getElementById('upperArmM');
+    const forearmMInput = document.getElementById('forearmM');
+    const applyAnthro = document.getElementById('applyAnthro');
+    const resetAnthro = document.getElementById('resetAnthro');
+
+    const plotJointSelect = document.getElementById('plotJoint');
+    const bufferLenInput = document.getElementById('bufferLen');
+
+    let net = null;
+    let stream = null;
+    let rafId = null;
+    let recording = false;
+    let samples = [];
+    let lastAngles = {};
+    let lastTime = null;
+
+    // defaults
+    let segmentParams = {
+      upperArm: {m:1.5, L:0.30, com:0.14, I:0.025},
+      forearm: {m:1.0, L:0.25, com:0.105, I:0.018}
+    };
+
+    function applyAnthropometricsFromUI(){
+      const mTot = Number(subjectMassInput.value) || 70;
+      const upperL = Number(upperArmLInput.value) || 0.30;
+      const foreL = Number(forearmLInput.value) || 0.25;
+      const upperM = Number(upperArmMInput.value) || 1.5;
+      const foreM = Number(forearmMInput.value) || 1.0;
+      // simple update
+      segmentParams.upperArm.m = upperM; segmentParams.upperArm.L = upperL; segmentParams.upperArm.com = upperL*0.47; segmentParams.upperArm.I = 0.025 * (upperL/0.30);
+      segmentParams.forearm.m = foreM; segmentParams.forearm.L = foreL; segmentParams.forearm.com = foreL*0.42; segmentParams.forearm.I = 0.018 * (foreL/0.25);
+      console.log('Anthro applied', segmentParams);
+    }
+    function resetAnthroToDefaults(){
+      subjectMassInput.value = 70; upperArmLInput.value = 0.30; forearmLInput.value = 0.25; upperArmMInput.value = 1.5; forearmMInput.value = 1.0;
+      applyAnthropometricsFromUI();
+    }
+    applyAnthro.addEventListener('click', applyAnthropometricsFromUI);
+    resetAnthro.addEventListener('click', resetAnthroToDefaults);
+
+    // load model
+    async function loadModel(){
+      document.querySelector('#startCam').disabled = true;
+      net = await const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.mjs");
+    pose = await PoseLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-assets/pose_landmarker_full.task" },
+      runningMode: "VIDEO",
+      numPoses: 1
+    });({architecture:'MobileNetV1',outputStride:16,inputResolution:257,mobileNetMultiplier:0.75});
+      document.querySelector('#startCam').disabled = false;
+      console.log('BlazePose ready');
+    }
+    loadModel();
+
+    async function startCamera(){
+      if(stream) return;
+      try{
+        stream = await navigator.mediaDevices.getUserMedia({video:{width:640,height:480},audio:false});
+        video.srcObject = stream;
+        await video.play();
+        overlay.width = video.videoWidth;
+        overlay.height = video.videoHeight;
+        lastTime = performance.now();
+        runPoseLoop();
+      }catch(err){
+        alert('Camera permission denied or not available: '+err.message);
+      }
+    }
+    function stopCamera(){
+      if(stream){
+        stream.getTracks().forEach(t=>t.stop());
+        stream = null;
+      }
+      if(rafId) cancelAnimationFrame(rafId);
+      ctx.clearRect(0,0,overlay.width,overlay.height);
+    }
+
+    async function runPoseLoop(){
+      const sampleMs = 50; // fixed for charting responsiveness
+      async function step(){
+        const now = performance.now();
+        if(!net) return;
+        const pose = await net.estimateSinglePose(video, {flipHorizontal:false});
+        drawPose(pose);
+        processKinematics(pose, now);
+        if(recording) storeSample(pose, now);
+        rafId = setTimeout(()=> requestAnimationFrame(step), sampleMs);
+      }
+      step();
+    }
+
+    function drawPose(pose){
+      ctx.clearRect(0,0,overlay.width,overlay.height);
+      for(const kp of pose.keypoints){
+        if(kp.score>0.3){
+          ctx.beginPath();ctx.arc(kp.position.x,kp.position.y,4,0,Math.PI*2);ctx.fillStyle='aqua';ctx.fill();
+        }
+      }
+      const adjacentPairs = posenet.getAdjacentKeyPoints(pose.keypoints, 0.3);
+      ctx.lineWidth=2;ctx.strokeStyle='lime';
+      for(const pair of adjacentPairs){
+        ctx.beginPath();ctx.moveTo(pair[0].position.x,pair[0].position.y);ctx.lineTo(pair[1].position.x,pair[1].position.y);ctx.stroke();
+      }
+    }
+
+    function getKeypointByName(pose, name){
+      return pose.keypoints.find(k=>k.part===name) || {position:{x:NaN,y:NaN},score:0};
+    }
+
+    function angleBetween(a,b,c){
+      const v1 = {x:a.x-b.x,y:a.y-b.y};
+      const v2 = {x:c.x-b.x,y:c.y-b.y};
+      const dot = v1.x*v2.x + v1.y*v2.y;
+      const mag1 = Math.hypot(v1.x,v1.y);
+      const mag2 = Math.hypot(v2.x,v2.y);
+      if(mag1===0||mag2===0) return NaN;
+      let cos = dot/(mag1*mag2);
+      cos = Math.max(-1,Math.min(1,cos));
+      return Math.acos(cos)*180/Math.PI;
+    }
+
+    function processKinematics(pose, now){
+      const dt = (now - (lastTime||now))/1000;
+      lastTime = now;
+      const results = [];
+      const labels = ['leftElbow','rightElbow','leftKnee','rightKnee'];
+      const triples = [ ['leftShoulder','leftElbow','leftWrist'], ['rightShoulder','rightElbow','rightWrist'], ['leftHip','leftKnee','leftAnkle'], ['rightHip','rightKnee','rightAnkle'] ];
+      for(let i=0;i<triples.length;i++){
+        const [p1,p2,p3] = triples[i];
+        const a = getKeypointByName(pose,p1).position;
+        const b = getKeypointByName(pose,p2).position;
+        const c = getKeypointByName(pose,p3).position;
+        const angle = angleBetween(a,b,c);
+        const prev = lastAngles[labels[i]] || {angle:angle, vel:0};
+        const vel = isFinite(angle) && isFinite(prev.angle) ? (angle - prev.angle)/dt : 0;
+        const accel = isFinite(vel) && isFinite(prev.vel) ? (vel - prev.vel)/dt : 0;
+        let torque = NaN;
+        if(i===0 || i===1){
+          const alpha = accel * Math.PI/180;
+          const theta = angle * Math.PI/180;
+          const params = {m:segmentParams.forearm.m, L:segmentParams.forearm.L, com:segmentParams.forearm.com, I:segmentParams.forearm.I};
+          const g = 9.80665;
+          torque = params.I * alpha + params.m * g * params.com * Math.sin(theta);
+        }
+        results.push({joint:labels[i], angle, vel, accel, torque});
+        lastAngles[labels[i]] = {angle, vel};
+      }
+
+      // update table
+      kinTable.innerHTML = '';
+      for(const r of results){
+        const name = r.joint.charAt(0).toUpperCase()+r.joint.slice(1);
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${name}</td><td>${isFinite(r.angle)?r.angle.toFixed(1):'--'}</td><td>${isFinite(r.vel)?r.vel.toFixed(1):'--'}</td><td>${isFinite(r.accel)?r.accel.toFixed(1):'--'}</td><td>${isFinite(r.torque)?r.torque.toFixed(3):'--'}</td>`;
+        kinTable.appendChild(tr);
+      }
+
+      // update charts
+      const jointToPlot = plotJointSelect.value;
+      const bufLen = Number(bufferLenInput.value) || 200;
+      const timeLabel = new Date().toLocaleTimeString();
+      // find matching result
+      const res = results.find(r=>r.joint===jointToPlot) || results[0];
+      if(res){
+        pushToBuffer(angleBuffer, res.angle);
+        pushToBuffer(torqueBuffer, res.torque);
+        pushToBuffer(timeBuffer, timeLabel);
+        trimBuffers(bufLen);
+        angleChart.data.labels = timeBuffer.slice();
+        angleChart.data.datasets[0].data = angleBuffer.slice();
+        torqueChart.data.labels = timeBuffer.slice();
+        torqueChart.data.datasets[0].data = torqueBuffer.slice();
+        angleChart.update('none');
+        torqueChart.update('none');
+      }
+    }
+
+    // data buffers for charts
+    const angleBuffer = [];
+    const torqueBuffer = [];
+    const timeBuffer = [];
+    function pushToBuffer(buf,val){ buf.push( Number.isFinite(val) ? Number(val.toFixed(3)) : NaN ); }
+    function trimBuffers(len){ while(angleBuffer.length>len) angleBuffer.shift(); while(torqueBuffer.length>len) torqueBuffer.shift(); while(timeBuffer.length>len) timeBuffer.shift(); }
+
+    // Chart.js init
+    const angleCtx = document.getElementById('angleChart').getContext('2d');
+    const torqueCtx = document.getElementById('torqueChart').getContext('2d');
+    const angleChart = new Chart(angleCtx, {
+      type:'line', data:{labels:[], datasets:[{label:'Angle (deg)', data:[], tension:0.2, borderColor:'rgba(99,102,241,1)', backgroundColor:'rgba(99,102,241,0.08)', fill:true}]}, options:{animation:false, maintainAspectRatio:false, scales:{x:{display:false}}}
+    });
+    const torqueChart = new Chart(torqueCtx, {
+      type:'line', data:{labels:[], datasets:[{label:'Torque (Nm)', data:[], tension:0.2, borderColor:'rgba(16,185,129,1)', backgroundColor:'rgba(16,185,129,0.06)', fill:true}]}, options:{animation:false, maintainAspectRatio:false, scales:{x:{display:false}}}
+    });
+
+    function storeSample(pose, now){
+      const time = new Date().toISOString();
+      const entry = {time};
+      for(const kp of pose.keypoints){ entry[kp.part+'_x'] = kp.position.x; entry[kp.part+'_y'] = kp.position.y; entry[kp.part+'_score'] = kp.score; }
+      for(const k in lastAngles){ entry[k+'_angle']=lastAngles[k].angle; entry[k+'_vel']=lastAngles[k].vel; }
+      samples.push(entry);
+    }
+
+    function downloadCSVFromSamples(){
+      if(samples.length===0){ alert('No samples recorded'); return; }
+      const keys = Object.keys(samples[0]);
+      const rows = [keys.join(',')];
+      for(const s of samples){ rows.push(keys.map(k=> (s[k]===undefined?'':String(s[k]).replace(/
+?
+/g,' ')) ).join(',')); }
+      const blob = new Blob([rows.join('
+')], {type:'text/csv'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'mocap_samples.csv'; a.click(); URL.revokeObjectURL(url);
+    }
+
+    // UI wiring
+    startCam.addEventListener('click', startCamera);
+    stopCam.addEventListener('click', stopCamera);
+    startRec.addEventListener('click', ()=>{ recording=true; samples=[]; lastAngles={}; alert('Recording started'); });
+    stopRec.addEventListener('click', ()=>{ recording=false; alert('Recording stopped - '+samples.length+' samples'); });
+    downloadCSV.addEventListener('click', downloadCSVFromSamples);
+
+    // initial anthro
+    resetAnthroToDefaults();
+
+    // cleanup
+    window.addEventListener('beforeunload', ()=>{ if(stream) stream.getTracks().forEach(t=>t.stop()); });
+  </script>
+</body>
+</html>
