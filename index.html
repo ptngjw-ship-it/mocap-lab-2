@@ -1,9 +1,9 @@
 <!doctype html>
 <html lang="en">
-head>
+<head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Junwei Biodynamic Lab</title>
+  <title>Jun Wei Kinematic Lab</title>
   <style>
     body{font-family:system-ui,Segoe UI,Roboto,Arial;background:#0f172a;color:#e6eef8;margin:0}
     .app{display:grid;grid-template-columns:380px 1fr;gap:12px;padding:12px}
@@ -15,21 +15,23 @@ head>
     th,td{padding:6px;border-bottom:1px solid rgba(255,255,255,0.04);text-align:left;font-size:13px}
     .small{font-size:12px;color:#9fb5d9}
     .row{display:flex;gap:8px}
-    .col{flex:1}
     .chartWrap{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
     input[type=number], select{background:#0b1220;border:1px solid #20314a;padding:8px;border-radius:6px;color:#e6eef8;width:100%}
     label{display:block;margin-top:8px}
     .muted{color:#9fb5d9;font-size:12px}
+    tr.focused-row{background:rgba(37,99,235,0.15);}
   </style>
 </head>
 <body>
   <div class="app">
     <div class="panel" style="height:calc(100vh - 32px);overflow:auto">
-      <h2>Junwei Biodynamic Lab — Motion Capture UI</h2>
+      <h2>Jun Wei Kinematic Lab — Motion Capture UI</h2>
+
       <div class="controls">
         <label class="small">Camera</label>
         <button id="startCam">Start camera (back camera preferred)</button>
         <button id="stopCam">Stop camera</button>
+
         <label class="small">Recording</label>
         <button id="startRec">Start recording</button>
         <button id="stopRec">Stop recording</button>
@@ -37,6 +39,7 @@ head>
       </div>
 
       <h3>Joint kinematics (live)</h3>
+      <p class="small">Tip: click a joint row to focus plots & free body diagram.</p>
       <table id="kinTable">
         <thead>
           <tr>
@@ -56,34 +59,23 @@ head>
         <button id="resetAnthro">Reset defaults</button>
       </div>
 
-      <h3>Smoothing</h3>
-      <label class="small">One-Euro filter: minCutoff</label>
-      <input id="minCutoff" type="number" step="0.01" value="1.0" />
-      <label class="small">One-Euro filter: beta</label>
-      <input id="beta" type="number" step="0.01" value="0.007" />
-
-      <h3>Plot / FBD joint</h3>
-      <label class="small">Select joint</label>
-      <select id="plotJoint" style="width:100%">
-        <option value="torso">Torso</option>
-        <option value="leftShoulder">Left Shoulder</option>
-        <option value="rightShoulder">Right Shoulder</option>
-        <option value="leftElbow">Left Elbow</option>
-        <option value="rightElbow">Right Elbow</option>
-        <option value="leftWrist">Left Wrist</option>
-        <option value="rightWrist">Right Wrist</option>
-        <option value="leftHip">Left Hip</option>
-        <option value="rightHip">Right Hip</option>
-        <option value="leftKnee">Left Knee</option>
-        <option value="rightKnee">Right Knee</option>
-        <option value="leftAnkle">Left Ankle</option>
-        <option value="rightAnkle">Right Ankle</option>
-      </select>
-      <label class="small">Buffer length (samples)</label>
-      <input id="bufferLen" type="number" value="200" />
+      <h3>Modes</h3>
+      <label class="small">
+        <input type="checkbox" id="teachingMode" />
+        Teaching mode (show biomech notes)
+      </label>
+      <label class="small" style="margin-top:8px;">
+        Chain view:
+        <select id="chainView" style="width:100%;margin-top:4px;">
+          <option value="full">Full body</option>
+          <option value="upper">Upper limb chain</option>
+          <option value="lower">Lower limb chain</option>
+        </select>
+      </label>
 
       <p class="muted">
         Notes: BlazePose + simplified inverse dynamics. High-fps capable (up to ~150 fps depending on device / browser).
+        CSV contains torso, shoulders, elbows, wrists, hips, knees, ankles (both sides).
       </p>
     </div>
 
@@ -102,6 +94,13 @@ head>
           <h4 class="small">Torque (Nm)</h4>
           <canvas id="torqueChart" height="200"></canvas>
         </div>
+      </div>
+
+      <div class="panel" style="margin-top:12px;">
+        <h4 class="small">Automatic Interpretation</h4>
+        <p id="interpText" class="small" style="white-space:pre-line;margin-top:6px;">
+          Waiting for pose...
+        </p>
       </div>
     </div>
   </div>
@@ -126,11 +125,9 @@ head>
     const applyAnthro = document.getElementById('applyAnthro');
     const resetAnthro = document.getElementById('resetAnthro');
 
-    const minCutoffInput = document.getElementById('minCutoff');
-    const betaInput = document.getElementById('beta');
-
-    const plotJointSelect = document.getElementById('plotJoint');
-    const bufferLenInput = document.getElementById('bufferLen');
+    const teachingModeCheckbox = document.getElementById('teachingMode');
+    const chainViewSelect = document.getElementById('chainView');
+    const interpText = document.getElementById('interpText');
 
     let poseLandmarker = null;
     let stream = null;
@@ -149,6 +146,17 @@ head>
       'leftKnee','rightKnee',
       'leftAnkle','rightAnkle'
     ];
+
+    let focusJoint = 'torso';
+    let focusJointSetByUser = false;
+
+    function defaultJointForChain(chain){
+      switch(chain){
+        case 'upper': return 'rightWrist';
+        case 'lower': return 'rightAnkle';
+        default:      return 'torso';
+      }
+    }
 
     // anthropometrics (derived from mass & height)
     let anthro = {
@@ -192,7 +200,14 @@ head>
     resetAnthro.addEventListener('click', resetAnthroFn);
     resetAnthroFn();
 
-    // One Euro Filter
+    chainViewSelect.addEventListener('change', ()=>{
+      if(!focusJointSetByUser){
+        focusJoint = defaultJointForChain(chainViewSelect.value);
+      }
+    });
+    focusJoint = defaultJointForChain(chainViewSelect.value);
+
+    // One Euro Filter (internal only)
     class OneEuroFilter {
       constructor(freq=150, minCutoff=1.0, beta=0.007, dcutoff=1.0){
         this.freq = freq; this.minCutoff = minCutoff; this.beta = beta; this.dcutoff = dcutoff;
@@ -236,6 +251,7 @@ head>
     });
 
     const angleBuffer = [], torqueBuffer = [], timeBuffer = [];
+    const PLOT_BUFFER_LEN = 200;
     function pushToBuffer(buf,val){ buf.push(Number.isFinite(val)?Number(val.toFixed(4)):NaN); }
     function trimBuffers(len){
       while(angleBuffer.length>len) angleBuffer.shift();
@@ -254,7 +270,6 @@ head>
       return Math.acos(cos)*180/Math.PI;
     }
 
-    // Torso angle: angle of vector (midHip -> midShoulder) relative to vertical
     function torsoAngleDeg(lm, idx){
       const lSh = lm[idx('leftShoulder')];
       const rSh = lm[idx('rightShoulder')];
@@ -265,12 +280,11 @@ head>
       const midHip = {x:(lHip.x+rHip.x)/2, y:(lHip.y+rHip.y)/2};
       const vx = midSh.x - midHip.x;
       const vy = midSh.y - midHip.y;
-      // vertical up is (0,-1) in image coords
-      const dot = vx*0 + vy*(-1);
+      const dot = vx*0 + vy*(-1); // vertical up
       const mag = Math.hypot(vx,vy);
       if(mag===0) return NaN;
       let cos = dot/mag; cos = Math.max(-1, Math.min(1, cos));
-      return Math.acos(cos)*180/Math.PI; // 0 = upright, larger = more flexed
+      return Math.acos(cos)*180/Math.PI;
     }
 
     function inverseDynamicsArm(theta_shoulder_deg, theta_elbow_deg, theta_shoulder_vel, theta_elbow_vel, theta_shoulder_acc, theta_elbow_acc){
@@ -348,8 +362,8 @@ head>
 
     const filters = {};
     function getFilter(key){
-      const minCutoff = Number(minCutoffInput.value) || 1.0;
-      const beta = Number(betaInput.value) || 0.007;
+      const minCutoff = 1.0;
+      const beta = 0.007;
       if(!filters[key]) filters[key] = new OneEuroFilter(150, minCutoff, beta);
       return filters[key];
     }
@@ -399,6 +413,18 @@ head>
     });
     downloadCSVBtn.addEventListener('click', handleDownloadCSV);
 
+    // Table row click: set focus joint
+    kinTable.addEventListener('click', (e)=>{
+      const tr = e.target.closest('tr');
+      if(!tr) return;
+      const j = tr.dataset.joint;
+      if(!j) return;
+      focusJoint = j;
+      focusJointSetByUser = true;
+      [...kinTable.querySelectorAll('tr')].forEach(r=>r.classList.remove('focused-row'));
+      tr.classList.add('focused-row');
+    });
+
     async function runLoop(){
       async function step(){
         if(!loopRunning) return;
@@ -446,7 +472,6 @@ head>
       const torsoAng = torsoAngleDeg(lm, idx);
       results['torso'] = updateJoint('torso', torsoAng, dt);
 
-      // Upper limbs
       const ls = lm[idx('leftShoulder')], rs = lm[idx('rightShoulder')];
       const le = lm[idx('leftElbow')], re = lm[idx('rightElbow')];
       const lw = lm[idx('leftWrist')], rw = lm[idx('rightWrist')];
@@ -469,7 +494,7 @@ head>
       if(le && lw && li) results['leftWrist']  = updateJoint('leftWrist',  angleBetween3D(le, lw, li), dt);
       if(re && rw && ri) results['rightWrist'] = updateJoint('rightWrist', angleBetween3D(re, rw, ri), dt);
 
-      // Hips: shoulder-hip-knee (using same-side shoulder)
+      // Hips: shoulder-hip-knee (same-side shoulder)
       if(ls && lh && lk) results['leftHip']  = updateJoint('leftHip',  angleBetween3D(ls, lh, lk), dt);
       if(rs && rh && rk) results['rightHip'] = updateJoint('rightHip', angleBetween3D(rs, rh, rk), dt);
 
@@ -481,7 +506,7 @@ head>
       if(lk && la && lfi) results['leftAnkle']  = updateJoint('leftAnkle',  angleBetween3D(lk, la, lfi), dt);
       if(rk && ra && rfi) results['rightAnkle'] = updateJoint('rightAnkle', angleBetween3D(rk, ra, rfi), dt);
 
-      // Inverse dynamics for arms (torque at shoulder & elbow)
+      // Inverse dynamics for arms: shoulder & elbow tau
       const lSh = results['leftShoulder'],  lEl = results['leftElbow'];
       const rSh = results['rightShoulder'], rEl = results['rightElbow'];
       if(lSh && lEl){
@@ -494,16 +519,18 @@ head>
         rSh.tau = inv.tau_shoulder;
         rEl.tau = inv.tau_elbow;
       }
-      // Other joints keep tau = NaN (no inverse dynamics model yet)
+      // others remain tau = NaN
 
       drawOverlay(lm, results);
 
-      // UI table (only JOINTS_OF_INTEREST)
+      // UI table
       kinTable.innerHTML = '';
       for(const key of JOINTS_OF_INTEREST){
         const r = results[key];
         if(!r) continue;
         const tr = document.createElement('tr');
+        tr.dataset.joint = key;
+        if(key === focusJoint) tr.classList.add('focused-row');
         tr.innerHTML = `
           <td>${key}</td>
           <td>${isFinite(r.angle)?r.angle.toFixed(1):'--'}</td>
@@ -514,16 +541,14 @@ head>
         kinTable.appendChild(tr);
       }
 
-      // Charts for selected joint
-      const jointToPlot = plotJointSelect.value;
-      const bufLen = Number(bufferLenInput.value) || 200;
-      const resPlot = results[jointToPlot] || results['torso'] || Object.values(results)[0];
+      // Charts for focusJoint
+      const resPlot = results[focusJoint] || results['torso'] || Object.values(results)[0];
       const timeLabel = new Date().toLocaleTimeString();
 
       pushToBuffer(angleBuffer, resPlot.angleSm);
       pushToBuffer(torqueBuffer, resPlot.tau);
       pushToBuffer(timeBuffer, timeLabel);
-      trimBuffers(bufLen);
+      trimBuffers(PLOT_BUFFER_LEN);
 
       angleChart.data.labels = timeBuffer.slice();
       angleChart.data.datasets[0].data = angleBuffer.slice();
@@ -532,6 +557,9 @@ head>
       torqueChart.data.labels = timeBuffer.slice();
       torqueChart.data.datasets[0].data = torqueBuffer.slice();
       torqueChart.update('none');
+
+      // Interpretation
+      updateInterpretation(focusJoint, resPlot);
 
       // Recording: joint-level only
       if(recording){
@@ -606,7 +634,7 @@ head>
       ctx.clearRect(0,0,overlay.width,overlay.height);
       drawSkeleton(lm);
 
-      const joint = plotJointSelect.value;
+      const joint = focusJoint;
       const res = results[joint];
       if(!res) return;
 
@@ -641,7 +669,7 @@ head>
       const baseX = cx;
       const baseY = cy;
 
-      const th1 = -Math.PI/2 + 0.4; // reference proximal orientation
+      const th1 = -Math.PI/2 + 0.4; // proximal reference
       const jointX = baseX + L1 * Math.cos(th1);
       const jointY = baseY + L1 * Math.sin(th1);
 
@@ -698,26 +726,124 @@ head>
         drawArrow(ax1, ay1, ax2, ay2, 'τ');
       }
 
-      // Labels
+      // Labels + teaching notes
       ctx.fillStyle = '#e5e7eb';
       ctx.font = '10px system-ui, sans-serif';
       ctx.textAlign = 'left';
       ctx.fillText(joint, x0 + 8, y0 + 14);
 
       const angleText = `θ ≈ ${isFinite(angleDeg)?angleDeg.toFixed(1):'--'}°`;
-      const tauText   = `τ ≈ ${isFinite(res.tau)?res.tau.toFixed(2):'--'} Nm`;
-      ctx.fillText(angleText, x0 + 8, y0 + insetSize - 30);
-      ctx.fillText(tauText,   x0 + 8, y0 + insetSize - 16);
+      const tauText   = `τ ≈ ${isFinite(tau)?tau.toFixed(2):'--'} Nm`;
+      ctx.fillText(angleText, x0 + 8, y0 + insetSize - 32);
+      ctx.fillText(tauText,   x0 + 8, y0 + insetSize - 18);
+
+      if(teachingModeCheckbox && teachingModeCheckbox.checked){
+        ctx.font = '9px system-ui, sans-serif';
+        const chainLabelMap = {upper:'Upper limb chain', lower:'Lower limb chain', full:'Full body'};
+        const chainLabel = chainLabelMap[chainViewSelect.value] || 'Full body';
+        ctx.fillText(`Chain: ${chainLabel}`, x0 + 8, y0 + 28);
+        ctx.fillText('mg: segment weight (downward)', x0 + 8, y0 + 42);
+        ctx.fillText('R: joint reaction (upward)',    x0 + 8, y0 + 54);
+        ctx.fillText('τ: net joint moment',           x0 + 8, y0 + 66);
+      }
 
       ctx.restore();
     }
+
+    // --- Automatic interpretation ---
+
+    function prettyJointName(j){
+      const side = j.startsWith('left') ? 'Left' :
+                   j.startsWith('right') ? 'Right' : '';
+      const base = j.replace(/^left|^right/,'');
+      if(j === 'torso') return 'Torso';
+      return `${side} ${base.charAt(0).toUpperCase()}${base.slice(1)}`;
+    }
+
+    function jointRegion(j){
+      if(j === 'torso') return 'Trunk';
+      if(/Shoulder|Elbow|Wrist/i.test(j)) return 'Upper limb';
+      if(/Hip|Knee|Ankle/i.test(j)) return 'Lower limb';
+      return 'Whole body';
+    }
+
+    function flexionDescriptor(angleDeg, joint){
+      if(!isFinite(angleDeg)) return 'angle not available';
+      // For our geometric definition: 180° ~ straight, smaller ~ more flexed
+      if(angleDeg >= 165) return 'near full extension';
+      if(angleDeg >= 135) return 'slight flexion';
+      if(angleDeg >= 95)  return 'moderate flexion';
+      if(angleDeg >= 60)  return 'deep flexion';
+      return 'very deep flexion';
+    }
+
+    function velocityDescriptor(vel){
+      if(!isFinite(vel)) return 'motion speed unknown';
+      const v = Math.abs(vel);
+      if(v < 5)   return 'almost static';
+      if(v < 30)  return 'slow / controlled movement';
+      if(v < 90)  return 'moderate speed movement';
+      return 'fast / ballistic movement';
+    }
+
+    function torqueDescriptor(tau){
+      if(!isFinite(tau)) return 'net joint torque not estimated';
+      const mag = Math.abs(tau);
+      let level;
+      if(mag < 5) level = 'low net joint torque';
+      else if(mag < 30) level = 'moderate net joint torque';
+      else level = 'high net joint torque';
+      const direction = tau >= 0 ? 'counter-clockwise (by this convention)' : 'clockwise (by this convention)';
+      return `${level}; direction ${direction}`;
+    }
+
+    function chainLabelText(){
+      const m = {upper:'Upper limb chain focus', lower:'Lower limb chain focus', full:'Full body context'};
+      return m[chainViewSelect.value] || 'Full body context';
+    }
+
+    function updateInterpretation(joint, r){
+      if(!interpText) return;
+      if(!r || (!isFinite(r.angleSm) && !isFinite(r.angle))){
+        interpText.textContent = 'Waiting for a stable pose and visible landmarks...';
+        return;
+      }
+
+      const name = prettyJointName(joint);
+      const region = jointRegion(joint);
+      const angleDeg = isFinite(r.angleSm) ? r.angleSm : r.angle;
+      const vel = r.vel;
+      const tau = r.tau;
+
+      const line1 = `${name} (${region}) — ${chainLabelText()}`;
+      const line2 = `Angle: ≈ ${isFinite(angleDeg)?angleDeg.toFixed(1):'--'}° → ${flexionDescriptor(angleDeg, joint)}.`;
+      const line3 = `Angular velocity: ≈ ${isFinite(vel)?vel.toFixed(1):'--'} °/s → ${velocityDescriptor(vel)}.`;
+      const line4 = `Net torque: ${isFinite(tau)?tau.toFixed(2):'--'} Nm → ${torqueDescriptor(tau)}.`;
+
+      let teachingExtra = '';
+      if(teachingModeCheckbox && teachingModeCheckbox.checked){
+        if(/Knee|Hip|Ankle/i.test(joint)){
+          teachingExtra =
+            '\nTeaching note: For lower-limb joints, larger torque magnitudes usually reflect higher muscle demand (e.g. quadriceps or plantarflexors) to control body weight relative to gravity.';
+        }else if(/Shoulder|Elbow|Wrist/i.test(joint)){
+          teachingExtra =
+            '\nTeaching note: In the upper limb, net torque combines shoulder/elbow muscles plus any external load in the hand. Positive vs negative here just sets arrow direction in the diagram.';
+        }else if(joint === 'torso'){
+          teachingExtra =
+            '\nTeaching note: Torso angle gives a simple proxy of trunk flexion. Larger angles here mean more forward lean relative to vertical.';
+        }
+      }
+
+      interpText.textContent = `${line1}\n${line2}\n${line3}\n${line4}${teachingExtra}`;
+    }
+
+    // --- CSV ---
 
     function handleDownloadCSV(){
       if(samples.length===0){
         alert('No samples recorded');
         return;
       }
-      // Build columns in deterministic order
       const baseCols = ['timeISO','timeMs','subjectMass','subjectHeight'];
       const jointCols = [];
       for(const j of JOINTS_OF_INTEREST){
@@ -733,7 +859,7 @@ head>
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'junwei_biodynamic_lab_joints.csv';
+      a.download = 'jun_wei_kinematic_lab_joints.csv';
       a.click();
       URL.revokeObjectURL(url);
     }
