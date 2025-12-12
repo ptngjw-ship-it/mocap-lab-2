@@ -8,7 +8,7 @@
     body{font-family:system-ui,Segoe UI,Roboto,Arial;background:#0f172a;color:#e6eef8;margin:0}
     .app{display:grid;grid-template-columns:340px 1fr;gap:12px;padding:12px}
     .panel{background:#0b1220;padding:12px;border-radius:10px;box-shadow:0 6px 24px rgba(2,6,23,.6)}
-    button{width:100%;margin:6px 0;padding:10px;border-radius:8px;border:none;background:#2563eb;color:white;font-weight:700;cursor:pointer}
+    button{width:100%;margin:6px 0;padding:10px;border-radius:8px;border:none;background:#2563eb;color:white;font-weight:800;cursor:pointer}
     button.secondary{background:#475569}
     button.danger{background:#ef4444}
     button.good{background:#22c55e}
@@ -95,15 +95,14 @@
       </label>
 
       <div class="hint">
-        • Tap a table row to set the “focus joint” (highlight + interpretation).<br/>
-        • iPhone Safari may negotiate FPS down (we show actual).<br/>
-        • Must be opened in Safari (not an in-app browser).
+        • Must open in Safari (not in-app browser).<br/>
+        • If camera fails: aA → Website Settings → Camera → Allow.<br/>
+        • iOS may negotiate FPS down; we show actual FPS.
       </div>
     </div>
 
     <div class="panel">
       <div id="videoWrap">
-        <!-- iOS Safari: playsinline + muted + autoplay are important -->
         <video id="video" playsinline muted autoplay></video>
         <canvas id="overlay"></canvas>
       </div>
@@ -121,7 +120,9 @@
   </div>
 
   <script type="module">
-    // ---------- UI refs ----------
+    // =========================
+    // UI refs
+    // =========================
     const video = document.getElementById('video');
     const overlay = document.getElementById('overlay');
     const ctx = overlay.getContext('2d');
@@ -155,13 +156,18 @@
     const kinBody = document.getElementById('kinBody');
     const interpText = document.getElementById('interpText');
 
-    // secure context indicator (GitHub Pages is HTTPS)
     if (window.isSecureContext) {
       securePill.style.display = 'inline-block';
       securePill.textContent = 'HTTPS OK';
+    } else {
+      securePill.style.display = 'inline-block';
+      securePill.className = 'pill bad';
+      securePill.textContent = 'NOT HTTPS';
     }
 
-    // ---------- State ----------
+    // =========================
+    // State
+    // =========================
     let stream = null;
     let loopRunning = false;
     let recording = false;
@@ -172,11 +178,13 @@
 
     let focusJoint = 'Torso';
 
-    // loop FPS
+    // loop FPS counter
     let fpsLastT = performance.now();
     let fpsFrames = 0;
 
-    // ---------- Joints ----------
+    // =========================
+    // Joint selection
+    // =========================
     const JOINTS = [
       'Torso',
       'L_Shoulder','R_Shoulder',
@@ -199,12 +207,13 @@
       }
     }
     buildJointSelector();
-
     function selectedJoints(){
       return [...jointGrid.querySelectorAll('input[type=checkbox]:checked')].map(x=>x.value);
     }
 
-    // ---------- Anthropometrics (mass/height derived) ----------
+    // =========================
+    // Anthropometrics from mass/height
+    // =========================
     let anthro = {
       subjectMass: 70,
       subjectHeight: 1.75,
@@ -238,18 +247,18 @@
 
       setStatus('Anthro applied');
     }
-
     function resetAnthro(){
       subjectMassInput.value = 70;
       subjectHeightInput.value = 1.75;
       applyAnthro();
     }
-
     applyAnthroBtn.addEventListener('click', applyAnthro);
     resetAnthroBtn.addEventListener('click', resetAnthro);
     resetAnthro();
 
-    // ---------- OneEuro filter (internal, UI removed) ----------
+    // =========================
+    // OneEuro filter (internal)
+    // =========================
     class OneEuroFilter {
       constructor(freq=120, minCutoff=1.0, beta=0.007, dcutoff=1.0){
         this.freq=freq; this.minCutoff=minCutoff; this.beta=beta; this.dcutoff=dcutoff;
@@ -284,9 +293,10 @@
       return filters[key];
     }
 
-    // ---------- MediaPipe Pose ----------
+    // =========================
+    // MediaPipe PoseLandmarker
+    // =========================
     let poseLandmarker = null;
-
     async function initPoseModel(){
       try{
         const { FilesetResolver, PoseLandmarker } =
@@ -314,7 +324,10 @@
     }
     await initPoseModel();
 
-    // ---------- Camera (120fps request + fallback + negotiated display) ----------
+    // =========================
+    // Camera: iOS reliable start
+    // (Start with video:true, then apply constraints)
+    // =========================
     function resizeCanvasToVideo(){
       const w = video.videoWidth || overlay.clientWidth || 1280;
       const h = video.videoHeight || overlay.clientHeight || 720;
@@ -322,50 +335,9 @@
       overlay.height = h;
     }
 
-    async function tryGetUserMedia(constraints){
-      return await navigator.mediaDevices.getUserMedia(constraints);
-    }
-
-    async function getCameraStreamRequestFPS(requestedFps){
-      const fps = Number(requestedFps) || 120;
-
-      // iPhone Safari: keep constraints simple, avoid facingMode exact
-      const cRequested = {
-        video: {
-          facingMode: "environment",
-          width:  { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: fps, max: fps }
-        },
-        audio: false
-      };
-
-      // fallback chain
-      const c60 = {
-        video: {
-          facingMode: "environment",
-          width:{ideal:1280}, height:{ideal:720},
-          frameRate:{ideal:60, max:60}
-        },
-        audio:false
-      };
-
-      const cAny = { video: true, audio: false };
-
-      try { return await tryGetUserMedia(cRequested); }
-      catch (e1){
-        console.warn('Requested FPS constraints failed:', e1?.name, e1?.message);
-        try { return await tryGetUserMedia(c60); }
-        catch (e2){
-          console.warn('60 FPS constraints failed:', e2?.name, e2?.message);
-          return await tryGetUserMedia(cAny);
-        }
-      }
-    }
-
     function updateNegotiatedFpsUI(requested, actual){
       reqFpsText.textContent = String(requested);
-      actFpsText.textContent = (actual === null || actual === undefined) ? '--' : String(actual);
+      actFpsText.textContent = (actual ?? '--');
 
       const req = Number(requested);
       const act = Number(actual);
@@ -374,27 +346,31 @@
         fpsNote.textContent = 'Actual FPS unknown (browser did not report frameRate).';
         return;
       }
-
       if(act >= req){
-        fpsNote.textContent = `Great — negotiated at ${act} fps.`;
+        fpsNote.textContent = `Negotiated at ${act} fps.`;
       }else{
-        fpsNote.textContent =
-          `iOS Safari negotiated down to ${act} fps (requested ${req}). This is normal in browsers.`;
+        fpsNote.textContent = `iOS Safari negotiated down to ${act} fps (requested ${req}).`;
       }
     }
 
-    async function startCamera(){
+    async function startCameraIOSReliable(){
       setStatus('Starting camera...');
 
+      // Stop old stream
       if(stream){
         stream.getTracks().forEach(t=>t.stop());
         stream = null;
       }
 
-      const requested = Number(fpsRequest.value) || 120;
-      stream = await getCameraStreamRequestFPS(requested);
+      // Strong preflight checks
+      if(!navigator.mediaDevices?.getUserMedia){
+        throw new Error('getUserMedia not supported on this browser');
+      }
 
-      // iOS Safari: set attributes BEFORE play
+      // 1) Get ANY camera first (most reliable on iOS Safari)
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+
+      // 2) Attach to video before play (iOS picky)
       video.muted = true;
       video.autoplay = true;
       video.playsInline = true;
@@ -404,24 +380,39 @@
 
       video.srcObject = stream;
 
-      // wait metadata for correct sizing
+      // Wait for metadata
       await new Promise((resolve)=>{
         if(video.readyState >= 1) return resolve();
-        video.onloadedmetadata = ()=>resolve();
+        video.onloadedmetadata = () => resolve();
       });
 
       resizeCanvasToVideo();
 
-      // must be user gesture: called from button click
+      // Must be inside a user gesture (Start button click)
       await video.play();
 
-      // show negotiated FPS
+      // 3) Now request "better" constraints (may fail, but keep camera anyway)
+      const requested = Number(fpsRequest.value) || 120;
       const track = stream.getVideoTracks()[0];
-      const settings = track?.getSettings ? track.getSettings() : {};
-      const actualFps = settings?.frameRate ?? null;
-      updateNegotiatedFpsUI(requested, actualFps);
 
-      setStatus(`Camera running`);
+      try {
+        await track.applyConstraints({
+          advanced: [
+            { facingMode: "environment" },
+            { frameRate: { ideal: requested, max: requested } },
+            { width: { ideal: 1280 }, height: { ideal: 720 } }
+          ]
+        });
+      } catch (e) {
+        console.warn("applyConstraints failed:", e.name, e.message);
+        // keep going, stream still valid
+      }
+
+      // 4) Show negotiated FPS
+      const settings = track.getSettings ? track.getSettings() : {};
+      updateNegotiatedFpsUI(requested, settings.frameRate ?? null);
+
+      setStatus('Camera running');
     }
 
     async function stopCamera(){
@@ -429,11 +420,14 @@
         stream.getTracks().forEach(t=>t.stop());
         stream = null;
       }
-      setStatus('Camera stopped');
       actFpsText.textContent = '--';
+      fpsNote.textContent = '';
+      setStatus('Camera stopped');
     }
 
-    // ---------- Recording ----------
+    // =========================
+    // Recording
+    // =========================
     startRecBtn.addEventListener('click', ()=>{
       if(!stream){ setStatus('Start camera first'); return; }
       recording = true;
@@ -447,7 +441,9 @@
       setStatus(`Recording stopped (${samples.length} samples)`);
     });
 
-    // ---------- PNG snapshot ----------
+    // =========================
+    // PNG snapshot
+    // =========================
     exportPNGBtn.addEventListener('click', ()=>{
       exportPNGSnapshot();
     });
@@ -468,13 +464,12 @@
       octx.drawImage(video, 0, 0, w, h);
       octx.drawImage(overlay, 0, 0, w, h);
 
-      // tiny stamp
+      // stamp
       octx.font = '16px system-ui';
       octx.fillStyle = 'rgba(15,23,42,0.55)';
-      octx.fillRect(8, 8, 380, 28);
+      octx.fillRect(8, 8, 420, 28);
       octx.fillStyle = 'rgba(226,232,240,0.95)';
-      const stamp = new Date().toLocaleString();
-      octx.fillText(`Jun Wei Biodynamic Lab • ${stamp}`, 14, 28);
+      octx.fillText(`Jun Wei Biodynamic Lab • ${new Date().toLocaleString()}`, 14, 28);
 
       const iso = new Date().toISOString().replace(/[:.]/g,'-');
       const filename = `JunWeiBiodynamicLab_snapshot_${iso}.png`;
@@ -491,7 +486,9 @@
       }, 'image/png');
     }
 
-    // ---------- Kinematics helpers ----------
+    // =========================
+    // Kinematics helpers
+    // =========================
     const kpNames = [
       'nose','leftEyeInner','leftEye','leftEyeOuter','rightEyeInner','rightEye','rightEyeOuter','leftEar','rightEar','mouthLeft','mouthRight',
       'leftShoulder','rightShoulder','leftElbow','rightElbow','leftWrist','rightWrist','leftPinky','rightPinky','leftIndex','rightIndex','leftThumb','rightThumb',
@@ -533,7 +530,6 @@
       return {angle:rawAngle, angleSm, vel, accel, tau:NaN};
     }
 
-    // simplified arm inverse dynamics (shoulder+elbow torque)
     function inverseDynamicsArm(theta_sh_deg, theta_el_deg, dth_sh, dth_el, ddth_sh, ddth_el){
       const g = 9.80665;
       const ua = anthro.upperArmM, fa = anthro.forearmM;
@@ -562,7 +558,9 @@
       return {tau_shoulder:tau1, tau_elbow:tau2};
     }
 
-    // ---------- Drawing: skeleton + FBD ----------
+    // =========================
+    // Drawing: skeleton + FBD
+    // =========================
     const SEG = {
       torso: 'rgba(248,250,252,0.95)',
       L_arm: 'rgba(59,130,246,0.95)',
@@ -570,7 +568,6 @@
       L_leg: 'rgba(34,197,94,0.95)',
       R_leg: 'rgba(132,204,22,0.95)'
     };
-
     function drawLine(a,b,color,width=5){
       ctx.strokeStyle = color;
       ctx.lineWidth = width;
@@ -659,7 +656,7 @@
       const LK = lm[idx('leftKnee')],     RK = lm[idx('rightKnee')];
       const LA = lm[idx('leftAnkle')],    RA = lm[idx('rightAnkle')];
 
-      // skeleton
+      // Skeleton
       if(LS && RS) drawLine(LS, RS, SEG.torso, 5);
       if(LS && LH) drawLine(LS, LH, SEG.torso, 5);
       if(RS && RH) drawLine(RS, RH, SEG.torso, 5);
@@ -700,11 +697,10 @@
       fbdAtJoint('R_Shoulder', RS, RE, results['R_Shoulder']?.tau);
       fbdAtJoint('L_Elbow', LE, LW, results['L_Elbow']?.tau);
       fbdAtJoint('R_Elbow', RE, RW, results['R_Elbow']?.tau);
-      // knees: τ not estimated (placeholder)
       fbdAtJoint('L_Knee', LK, LA, results['L_Knee']?.tau);
       fbdAtJoint('R_Knee', RK, RA, results['R_Knee']?.tau);
 
-      // focus ring
+      // Focus ring
       const fp = jointPointForKey(focusJoint, lm);
       if(fp){
         ctx.strokeStyle = 'rgba(37,99,235,0.95)';
@@ -715,7 +711,9 @@
       }
     }
 
-    // ---------- Interpretation ----------
+    // =========================
+    // Interpretation
+    // =========================
     function flexionDescriptor(a){
       if(!isFinite(a)) return 'angle not available';
       if(a >= 165) return 'near full extension';
@@ -763,7 +761,9 @@ Vel   ≈ ${isFinite(v)?v.toFixed(1):'--'} °/s → ${speedDescriptor(v)}
       interpText.textContent = txt;
     }
 
-    // ---------- CSV ----------
+    // =========================
+    // CSV
+    // =========================
     function downloadCSV(){
       if(samples.length === 0){ setStatus('No samples to export'); return; }
       const cols = Object.keys(samples[0]);
@@ -787,7 +787,9 @@ Vel   ≈ ${isFinite(v)?v.toFixed(1):'--'} °/s → ${speedDescriptor(v)}
     }
     downloadBtn.addEventListener('click', downloadCSV);
 
-    // ---------- Status ----------
+    // =========================
+    // Status helper
+    // =========================
     let statusTimer = null;
     function setStatus(msg){
       statusText.textContent = msg;
@@ -797,12 +799,13 @@ Vel   ≈ ${isFinite(v)?v.toFixed(1):'--'} °/s → ${speedDescriptor(v)}
       }, 1500);
     }
 
-    // ---------- Main loop ----------
+    // =========================
+    // Main loop
+    // =========================
     async function runLoop(){
       const step = async ()=>{
         if(!loopRunning) return;
 
-        // loop fps
         fpsFrames++;
         const tNow = performance.now();
         if(tNow - fpsLastT >= 500){
@@ -850,7 +853,6 @@ Vel   ≈ ${isFinite(v)?v.toFixed(1):'--'} °/s → ${speedDescriptor(v)}
       lastTime = now;
 
       const results = {};
-
       results['Torso'] = updateJoint('Torso', torsoAngleDeg(lm), now, dt);
 
       const LS = lm[idx('leftShoulder')], RS = lm[idx('rightShoulder')];
@@ -881,7 +883,7 @@ Vel   ≈ ${isFinite(v)?v.toFixed(1):'--'} °/s → ${speedDescriptor(v)}
       if(LK && LA && LFI) results['L_Ankle'] = updateJoint('L_Ankle', angleBetween3D(LK, LA, LFI), now, dt);
       if(RK && RA && RFI) results['R_Ankle'] = updateJoint('R_Ankle', angleBetween3D(RK, RA, RFI), now, dt);
 
-      // arm torques
+      // Arm torques
       if(results['L_Shoulder'] && results['L_Elbow']){
         const sh = results['L_Shoulder'], el = results['L_Elbow'];
         const inv = inverseDynamicsArm(sh.angleSm, el.angleSm, sh.vel, el.vel, sh.accel, el.accel);
@@ -932,17 +934,24 @@ Vel   ≈ ${isFinite(v)?v.toFixed(1):'--'} °/s → ${speedDescriptor(v)}
       }
     }
 
-    // focus joint by tap
+    // Focus joint by tapping table
     kinBody.addEventListener('click', (e)=>{
       const tr = e.target.closest('tr');
       if(!tr) return;
       focusJoint = tr.dataset.joint || focusJoint;
     });
 
-    // ---------- Wire camera buttons ----------
+    // =========================
+    // Camera button wiring
+    // =========================
+    fpsRequest.addEventListener('change', ()=>{
+      reqFpsText.textContent = fpsRequest.value;
+    });
+
     startCamBtn.addEventListener('click', async ()=>{
       try{
-        await startCamera();
+        await startCameraIOSReliable();
+
         if(!loopRunning){
           loopRunning = true;
           lastTime = performance.now();
@@ -950,7 +959,7 @@ Vel   ≈ ${isFinite(v)?v.toFixed(1):'--'} °/s → ${speedDescriptor(v)}
         }
       }catch(err){
         console.error(err);
-        // show real iOS error if it fails
+        // iOS needs to show the actual error
         alert(`${err.name}: ${err.message}`);
         setStatus(`Camera error: ${err.name}`);
       }
@@ -961,23 +970,19 @@ Vel   ≈ ${isFinite(v)?v.toFixed(1):'--'} °/s → ${speedDescriptor(v)}
       await stopCamera();
     });
 
-    // ---------- Cleanup ----------
+    // =========================
+    // Cleanup / resize
+    // =========================
+    window.addEventListener('resize', ()=>{
+      if(video?.videoWidth) resizeCanvasToVideo();
+    });
+
     window.addEventListener('beforeunload', ()=>{
       try{
         if(stream?.getTracks) stream.getTracks().forEach(t=>t.stop());
         if(poseLandmarker?.close) poseLandmarker.close();
       }catch(_){}
     });
-
-    window.addEventListener('resize', ()=>{
-      if(video?.videoWidth) resizeCanvasToVideo();
-    });
-
-    // Update requested FPS label immediately
-    fpsRequest.addEventListener('change', ()=>{
-      reqFpsText.textContent = fpsRequest.value;
-    });
-
   </script>
 </body>
 </html>
